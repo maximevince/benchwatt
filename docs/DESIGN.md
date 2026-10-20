@@ -78,3 +78,17 @@ Color only where it means something:
 ## Motion
 Minimal: 150 ms color/opacity transitions; no layout animation; readouts update at ≤10 Hz with
 no tweening (instrument values must be honest).
+
+## Phase 5: menu and UART console
+- The in-app top bar has a compact shadcn-svelte menubar after the brand. File handles
+  native recording dialogs and CSV/sigrok export; Edit controls selection and stats copy;
+  View controls plot zoom, follow, drawer, and theme; Device controls output, recording,
+  UART, and device details; Help shows the shortcut list and app version.
+- A file name and unsaved dot appear in the top bar. Replacing or quitting with an unsaved
+  recording uses a shadcn dialog. Export offers the selected range or full recording.
+- The UART drawer tab is a virtualized line console. RX is pink; TX uses a muted pink and
+  sits lower in the plot's UART lane. The toolbar controls serial settings, display mode,
+  filtering, and view clearing. The send box has line ending and command history controls.
+- Console and plot share the time range, selected line, and hover marker. A line click
+  centers the plot when needed; Shift-click creates a range. Plot range selection highlights
+  console lines. Hovering either surface links the corresponding UART event to the other.

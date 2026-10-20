@@ -195,7 +195,9 @@ fn captured_session() {
 #[test]
 fn uart_bursts_split_across_packets_are_joined() {
     let mut r = Recording::new(&[spec(0x17, "rx", Kind::Bytes, 0)]);
-    let rx = |r: &mut Recording, ms, s: &[u8]| r.push_block(ms, &block(0x17, BlockBody::Bytes(s.to_vec())));
+    let rx = |r: &mut Recording, ms, s: &[u8]| {
+        r.push_block(ms, &block(0x17, BlockBody::Bytes(s.to_vec())))
+    };
     for ms in 0..=1000 {
         match ms {
             816 => rx(&mut r, ms, b"hello a"),
@@ -206,9 +208,31 @@ fn uart_bursts_split_across_packets_are_joined() {
         }
     }
     let chunks = r.uart(0.0, 1.0);
-    let text: Vec<_> = chunks.iter().map(|c| (c.t, String::from_utf8_lossy(&c.bytes).into_owned())).collect();
+    let text: Vec<_> = chunks
+        .iter()
+        .map(|c| (c.t, String::from_utf8_lossy(&c.bytes).into_owned()))
+        .collect();
     assert_eq!(
         text,
-        [(0.816, "hello app\n".into()), (0.818, "next".into()), (0.9, "later".into())]
+        [
+            (0.816, "hello app\n".into()),
+            (0.818, "next".into()),
+            (0.9, "later".into())
+        ]
     );
+}
+
+#[test]
+fn uart_tx_uses_newest_packet_time() {
+    let mut r = Recording::new(&[spec(0x17, "rx", Kind::Bytes, 0)]);
+    r.push_uart_tx(b"before");
+    assert!(r.uart_channel(0x19, 0.0, 1.0).is_empty());
+    r.push_block(100, &block(0x17, BlockBody::Bytes(b"rx".to_vec())));
+    r.push_block(102, &block(0x17, BlockBody::Bytes(b"\n".to_vec())));
+    r.push_uart_tx(b"tx\n");
+    assert_eq!(r.uart_channel(0x19, 0.0, 1.0)[0].t, 0.002);
+    assert_eq!(r.uart(0.0, 1.0)[0].bytes, b"rx\n");
+    r.stop();
+    r.push_uart_tx(b"after");
+    assert_eq!(r.uart_channel(0x19, 0.0, 1.0).len(), 1);
 }

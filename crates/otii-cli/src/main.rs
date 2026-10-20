@@ -653,6 +653,7 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
                     fw: property(0x81),
                     hw: property(0x80),
                     uid: property(0x82),
+                    proto: Some(info.proto),
                 },
                 ..Meta::default()
             };

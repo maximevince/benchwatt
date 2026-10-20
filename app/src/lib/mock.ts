@@ -39,8 +39,8 @@ function recTick() {
       edges.push({ t: start, mask: 1 }, { t: start + 0.02, mask: 0 });
       recording.samples.gpi = edges.length;
     }
-    if (recording.channels.includes('rx')) {
-      uartLog.push({ t: start, bytes: Array.from(new TextEncoder().encode(`tick ${++pulse}\n`)) });
+    if (uartOpened && recording.channels.includes('rx')) {
+      uartLog.push({ t: start, dir: 'rx', bytes: Array.from(new TextEncoder().encode(`tick ${++pulse}\n`)) });
       recording.samples.rx = uartLog.reduce((n, x) => n + x.bytes.length, 0);
     }
   }
@@ -125,7 +125,7 @@ function tick() {
   emit('monitor', monitor);
 }
 if (!disconnected) window.setTimeout(() => {
-  connection = { connected: true, info: { name: 'Otii Arc', fw: '3.1.3', hw: '1.0', uid: '5120A83D42' } };
+  connection = { connected: true, info: { name: 'Otii Arc', fw: '3.1.3', hw: '1.0', uid: '5120A83D42', proto: 3 } };
   emit('connection', connection);
   emit('settings', { ...settings });
   tick();
@@ -179,8 +179,25 @@ export const mockBackend: Backend = {
   getView: async (ch, t0, t1, px) => mockView(ch, t0, t1, px),
   getStats: async (t0, t1) => mockStats(t0, t1),
   getUart: async (t0, t1) => uartLog.filter(x => x.t >= t0 && x.t <= t1),
+  saveRecording: async () => {},
+  loadRecording: async () => { if (!recording) fail('No mock recording saved yet'); recording = { ...recording, active: false }; emit('recording', recording); return recording; },
+  exportRecording: async () => {},
   getEdges: async (t0, t1) => edges.filter(x => x.t >= t0 && x.t <= t1),
   uartOpen: async baud => { if (!Number.isInteger(baud) || baud <= 0) fail('invalid baud rate'); uartOpened = true; if (recording?.active && !recording.channels.includes('rx')) recording = { ...recording, channels: [...recording.channels, 'rx'], samples: { ...recording.samples, rx: 0 } }; },
   uartClose: async () => { uartOpened = false; },
-  uartSend: async text => { if (!uartOpened) fail('UART closed'); uartLog.push({ t: recording?.duration_s ?? 0, bytes: Array.from(new TextEncoder().encode(text)) }); },
+  uartSend: async text => {
+    if (!uartOpened) fail('UART closed');
+    if (!recording?.active) return;
+    const t = recording.duration_s, bytes = Array.from(new TextEncoder().encode(text));
+    uartLog.push({ t, dir: 'tx', bytes });
+    recording = { ...recording, channels: [...new Set([...recording.channels, 'tx'])], samples: { ...recording.samples, tx: (recording.samples.tx ?? 0) + bytes.length } };
+    window.setTimeout(() => {
+      if (!recording?.active) return;
+      // The Arc splits the echo over 1 ms packets; otii-rec joins them back into one chunk.
+      uartLog.push({ t: t + .001, dir: 'rx', bytes });
+      recording = { ...recording, samples: { ...recording.samples, rx: (recording.samples.rx ?? 0) + bytes.length } };
+      emit('recording', recording);
+    }, 1);
+    emit('recording', recording);
+  },
 };

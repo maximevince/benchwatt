@@ -46,6 +46,7 @@ fn native_roundtrip() {
         rec.push_block(ms, &block(0x16, BlockBody::Digital(vec![ms % 2])));
         rec.push_block(ms, &block(0x17, BlockBody::Bytes(vec![ms as u8])));
     }
+    rec.push_uart_tx(b"sent\n");
     let p = path("otii-rec");
     rec.save(&p, &Meta::default()).unwrap();
     let (loaded, meta) = Recording::load(&p).unwrap();
@@ -55,6 +56,8 @@ fn native_roundtrip() {
     assert_eq!(loaded.gaps(), rec.gaps());
     assert_eq!(loaded.edges(0.0, 1.0).len(), rec.edges(0.0, 1.0).len());
     assert_eq!(loaded.uart(0.0, 1.0).len(), rec.uart(0.0, 1.0).len());
+    assert_eq!(loaded.uart_channel(0x19, 0.0, 1.0)[0].bytes, b"sent\n");
+    assert_eq!(loaded.uart_channel(0x19, 0.0, 1.0)[0].t, 0.005);
     for ch in [0, 1] {
         let a = rec.stats(ch, 0.0, 1.0).unwrap();
         let b = loaded.stats(ch, 0.0, 1.0).unwrap();

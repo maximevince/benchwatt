@@ -95,8 +95,15 @@ pub fn export_csv_channel(
     out.flush()
 }
 pub fn export_sr(rec: &Recording, path: impl AsRef<Path>) -> io::Result<()> {
+    export_sr_range(rec, path, None)
+}
+pub fn export_sr_range(
+    rec: &Recording,
+    path: impl AsRef<Path>,
+    range: Option<(f64, f64)>,
+) -> io::Result<()> {
     let hz = rate(rec)?;
-    let (_, end) = span(rec, None, hz)?;
+    let (first, end) = span(rec, range, hz)?;
     let analog: Vec<_> = rec
         .specs()
         .into_iter()
@@ -133,7 +140,7 @@ pub fn export_sr(rec: &Recording, path: impl AsRef<Path>) -> io::Result<()> {
     for (i, s) in analog.iter().enumerate() {
         zip.start_file(format!("analog-1-{}-1", probes + i + 1), options)
             .map_err(io::Error::other)?;
-        for n in 0..end {
+        for n in first..end {
             let t = n as f64 / hz as f64;
             zip.write_all(&rec.analog_at(s.id, t).unwrap_or(f32::NAN).to_le_bytes())?;
         }
@@ -144,7 +151,7 @@ pub fn export_sr(rec: &Recording, path: impl AsRef<Path>) -> io::Result<()> {
         let edges = rec.edges(0.0, rec.duration());
         let mut pos = 0;
         let mut mask = 0;
-        for n in 0..end {
+        for n in first..end {
             let t = n as f64 / hz as f64;
             while pos < edges.len() && edges[pos].t <= t + 1e-12 {
                 mask = edges[pos].mask;

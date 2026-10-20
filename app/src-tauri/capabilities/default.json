@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Main application window",
   "windows": ["main"],
-  "permissions": ["core:default", "core:event:default"]
+  "permissions": ["core:default", "core:event:default", "dialog:allow-open", "dialog:allow-save"]
 }

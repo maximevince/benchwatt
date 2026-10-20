@@ -319,6 +319,26 @@ impl Recording {
             _ => {}
         }
     }
+    /// Append transmitted UART bytes at the newest recorded packet time.
+    pub fn push_uart_tx(&mut self, bytes: &[u8]) {
+        if !self.active || bytes.is_empty() || self.first.is_none() {
+            return;
+        }
+        self.add_channel(ChannelSpec {
+            id: 0x19,
+            name: "tx".into(),
+            unit: "".into(),
+            rate_hz: 0,
+            kind: Kind::Bytes,
+        });
+        let t = self.last.zip(self.first).map_or(0.0, |(last, first)| {
+            last.wrapping_sub(first) as f64 / 1000.0
+        });
+        self.channels.get_mut(&0x19).unwrap().uart.push(UartChunk {
+            t,
+            bytes: bytes.to_vec(),
+        });
+    }
     pub fn duration(&self) -> f64 {
         self.last
             .zip(self.first)
@@ -521,10 +541,13 @@ impl Recording {
         })
     }
     pub fn uart(&self, t0: f64, t1: f64) -> Vec<UartChunk> {
+        self.uart_channel(0x17, t0, t1)
+    }
+    pub fn uart_channel(&self, ch: u16, t0: f64, t1: f64) -> Vec<UartChunk> {
         if !t0.is_finite() || !t1.is_finite() || t1 < t0 {
             return Vec::new();
         }
-        self.channels.get(&0x17).map_or(Vec::new(), |c| {
+        self.channels.get(&ch).map_or(Vec::new(), |c| {
             let s = c.uart.partition_point(|x| x.t < t0);
             let e = c.uart.partition_point(|x| x.t <= t1);
             c.uart[s..e].to_vec()

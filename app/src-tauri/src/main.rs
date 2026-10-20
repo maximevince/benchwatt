@@ -1,6 +1,6 @@
 use otii_arc::prop::{CHANNELS, channel_by_name};
 use otii_arc::{Arc as OtiiArc, Error, Event, PropertyValue, device::find_port};
-use otii_rec::{ChannelSpec, Kind, Recording, View};
+use otii_rec::{ChannelSpec, Kind, Recording, View, export, file};
 use serde::Serialize;
 use std::{
     sync::{
@@ -19,6 +19,7 @@ static GPO: Mutex<[Option<bool>; 3]> = Mutex::new([None; 3]);
 struct DeviceState {
     arc: Mutex<Option<OtiiArc>>,
     recording: Mutex<Option<Recording>>,
+    recording_device: Mutex<file::DeviceInfo>,
     uart_open: AtomicBool,
     running: AtomicBool,
 }
@@ -40,6 +41,7 @@ struct DeviceInfo {
     fw: Option<String>,
     hw: Option<String>,
     uid: Option<String>,
+    proto: u32,
 }
 #[derive(Clone, Serialize)]
 struct Connection {
@@ -124,6 +126,17 @@ fn info(arc: &OtiiArc) -> DeviceInfo {
         hw: string(0x80),
         fw: string(0x81),
         uid: string(0x82),
+        proto: arc.info().proto,
+    }
+}
+fn recording_device_info(arc: &OtiiArc) -> file::DeviceInfo {
+    let d = info(arc);
+    file::DeviceInfo {
+        name: d.name,
+        fw: d.fw,
+        hw: d.hw,
+        uid: d.uid,
+        proto: Some(d.proto),
     }
 }
 fn snapshot(state: &DeviceState) -> Result<StateSnapshot, Error> {
@@ -246,6 +259,7 @@ fn start_recording(
         return Err("select at least one channel".into());
     }
     let info = arc.info();
+    let device = recording_device_info(arc);
     let specs: Vec<_> = ids
         .iter()
         .map(|&id| {
@@ -271,6 +285,7 @@ fn start_recording(
     }
     arc.start_recording(&ids.iter().map(|&x| x as u32).collect::<Vec<_>>())
         .map_err(|e| e.to_string())?;
+    *state.recording_device.lock().unwrap() = device;
     let rec = Recording::new(&specs);
     let result = rec_info(&rec);
     *rec_guard = Some(rec);
@@ -348,13 +363,18 @@ fn get_stats(state: tauri::State<'_, DeviceState>, t0: f64, t1: f64) -> Result<A
     })
 }
 #[tauri::command]
-fn get_uart(state: tauri::State<'_, DeviceState>, t0: f64, t1: f64) -> Vec<otii_rec::UartChunk> {
+fn get_uart(
+    state: tauri::State<'_, DeviceState>,
+    ch: u16,
+    t0: f64,
+    t1: f64,
+) -> Vec<otii_rec::UartChunk> {
     state
         .recording
         .lock()
         .unwrap()
         .as_ref()
-        .map_or(Vec::new(), |r| r.uart(t0, t1))
+        .map_or(Vec::new(), |r| r.uart_channel(ch, t0, t1))
 }
 #[tauri::command]
 fn get_edges(state: tauri::State<'_, DeviceState>, t0: f64, t1: f64) -> Vec<otii_rec::Edge> {
@@ -409,7 +429,64 @@ fn uart_send(state: tauri::State<'_, DeviceState>, text: String) -> Result<(), S
         .as_ref()
         .ok_or("device disconnected")?
         .uart_write(text.as_bytes())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    if let Some(rec) = state.recording.lock().unwrap().as_mut() {
+        rec.push_uart_tx(text.as_bytes());
+    }
+    Ok(())
+}
+#[tauri::command]
+fn save_recording(state: tauri::State<'_, DeviceState>, path: String) -> Result<(), String> {
+    let rec = state.recording.lock().unwrap();
+    let rec = rec.as_ref().ok_or("no recording")?;
+    let meta = file::Meta {
+        device: state.recording_device.lock().unwrap().clone(),
+        ..file::Meta::default()
+    };
+    rec.save(path, &meta).map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn load_recording(
+    state: tauri::State<'_, DeviceState>,
+    path: String,
+) -> Result<RecordingInfo, String> {
+    let (loaded, meta) = Recording::load(path).map_err(|e| e.to_string())?;
+    let guard = state.arc.lock().unwrap();
+    let mut rec = state.recording.lock().unwrap();
+    if rec.as_ref().is_some_and(Recording::active)
+        && let Some(arc) = guard.as_ref()
+    {
+        arc.stop_recording().map_err(|e| e.to_string())?;
+    }
+    let result = rec_info(&loaded);
+    *rec = Some(loaded);
+    *state.recording_device.lock().unwrap() = meta.device;
+    Ok(result)
+}
+#[tauri::command]
+fn export_recording(
+    state: tauri::State<'_, DeviceState>,
+    path: String,
+    t0: Option<f64>,
+    t1: Option<f64>,
+) -> Result<(), String> {
+    let rec = state.recording.lock().unwrap();
+    let rec = rec.as_ref().ok_or("no recording")?;
+    let range = match (t0, t1) {
+        (Some(a), Some(b)) => Some((a, b)),
+        (None, None) => None,
+        _ => return Err("incomplete range".into()),
+    };
+    let extension = std::path::Path::new(&path)
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "csv" => export::export_csv(rec, path, range).map_err(|e| e.to_string()),
+        "sr" => export::export_sr_range(rec, path, range).map_err(|e| e.to_string()),
+        _ => Err("export format must be .csv or .sr".into()),
+    }
 }
 
 fn worker(app: tauri::AppHandle) {
@@ -533,9 +610,11 @@ fn worker(app: tauri::AppHandle) {
 }
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(DeviceState {
             arc: Mutex::new(None),
             recording: Mutex::new(None),
+            recording_device: Mutex::new(file::DeviceInfo::default()),
             uart_open: AtomicBool::new(false),
             running: AtomicBool::new(true),
         })
@@ -555,7 +634,10 @@ fn main() {
             get_edges,
             uart_open,
             uart_close,
-            uart_send
+            uart_send,
+            save_recording,
+            load_recording,
+            export_recording
         ])
         .setup(|app| {
             let handle = app.handle().clone();

@@ -14,6 +14,8 @@ pub struct DeviceInfo {
     pub fw: Option<String>,
     pub hw: Option<String>,
     pub uid: Option<String>,
+    #[serde(default)]
+    pub proto: Option<u32>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChannelMeta {
@@ -70,9 +72,14 @@ fn safe_name(s: &str) -> bool {
 }
 #[derive(Serialize, Deserialize)]
 struct UartIndex {
+    #[serde(default = "rx_channel")]
+    ch: u16,
     t: f64,
     offset: u64,
     len: usize,
+}
+fn rx_channel() -> u16 {
+    0x17
 }
 impl Recording {
     pub fn save(&self, path: impl AsRef<Path>, supplied: &Meta) -> io::Result<()> {
@@ -138,10 +145,11 @@ impl Recording {
         let mut index = Vec::new();
         zip.start_file("uart.bin", options()).map_err(zip_err)?;
         let mut offset = 0;
-        for c in self.channels.values() {
+        for (&ch, c) in &self.channels {
             for u in &c.uart {
                 zip.write_all(&u.bytes)?;
                 index.push(UartIndex {
+                    ch,
                     t: u.t,
                     offset,
                     len: u.bytes.len(),
@@ -230,10 +238,6 @@ impl Recording {
         let index: Vec<UartIndex> =
             serde_json::from_reader(zip.by_name("uart.json").map_err(zip_err)?)?;
         if !index.is_empty() {
-            let c = rec
-                .channels
-                .get_mut(&0x17)
-                .ok_or_else(|| invalid("UART channel missing"))?;
             let mut bin = zip.by_name("uart.bin").map_err(zip_err)?;
             let mut offset = 0;
             for item in index {
@@ -242,6 +246,13 @@ impl Recording {
                 }
                 let mut bytes = vec![0; item.len];
                 bin.read_exact(&mut bytes)?;
+                let c = rec
+                    .channels
+                    .get_mut(&item.ch)
+                    .ok_or_else(|| invalid("UART channel missing"))?;
+                if c.spec.kind != Kind::Bytes {
+                    return Err(invalid("UART channel kind mismatch"));
+                }
                 c.uart.push(UartChunk { t: item.t, bytes });
                 offset += item.len as u64;
             }
