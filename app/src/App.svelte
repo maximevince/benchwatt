@@ -10,6 +10,7 @@
   import ExpansionPanel from '$lib/components/ExpansionPanel.svelte';
   import StatusPanel from '$lib/components/StatusPanel.svelte';
   import LiveChart from '$lib/components/LiveChart.svelte';
+  import RecordingPlot from '$lib/components/RecordingPlot.svelte';
   import BottomDrawer from '$lib/components/BottomDrawer.svelte';
   import { PaneGroup, Pane, Handle } from '$lib/components/ui/resizable';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
@@ -22,7 +23,9 @@
   });
   function shortcut(event: KeyboardEvent) {
     const target = event.target as HTMLElement;
-    if (event.repeat || target.closest('input, textarea, select, button, [contenteditable="true"]') || !app.connection.connected) return;
+    if (event.repeat || target.closest('input, textarea, select, [contenteditable="true"]') || !app.connection.connected) return;
+    if (event.code === 'KeyR') { event.preventDefault(); void app.toggleRecording(); return; }
+    if (target.closest('button')) return;
     if (event.code === 'Space') {
       event.preventDefault();
       void app.command('set_output', { on: !app.settings?.main }).then(ok => {
@@ -44,14 +47,14 @@
       <Pane defaultSize={75} minSize={55} class="main-pane">
         {#if app.drawerOpen}
           <PaneGroup direction="vertical" class="main-panes">
-            <Pane defaultSize={76} minSize={40}><LiveChart/></Pane>
+            <Pane defaultSize={76} minSize={40}><div class="plot-container">{#if app.recording}<div class="plot-tabs"><button class:active={app.plotMode === 'live'} onclick={() => app.plotMode = 'live'}>Live</button><button class:active={app.plotMode === 'recording'} onclick={() => app.plotMode = 'recording'}>Recording</button></div>{/if}{#if app.recording && app.plotMode === 'recording'}<RecordingPlot/>{:else}<LiveChart/>{/if}</div></Pane>
             <Handle withHandle/>
             <Pane defaultSize={24} minSize={14} maxSize={45} collapsible collapsedSize={6} onCollapse={() => app.drawerOpen = false}>
               <BottomDrawer onToggle={toggleDrawer}/>
             </Pane>
           </PaneGroup>
         {:else}
-          <div class="main-panes-collapsed"><LiveChart/><BottomDrawer onToggle={toggleDrawer}/></div>
+          <div class="main-panes-collapsed"><div class="plot-container">{#if app.recording}<div class="plot-tabs"><button class:active={app.plotMode === 'live'} onclick={() => app.plotMode = 'live'}>Live</button><button class:active={app.plotMode === 'recording'} onclick={() => app.plotMode = 'recording'}>Recording</button></div>{/if}{#if app.recording && app.plotMode === 'recording'}<RecordingPlot/>{:else}<LiveChart/>{/if}</div><BottomDrawer onToggle={toggleDrawer}/></div>
         {/if}
       </Pane>
     </PaneGroup>

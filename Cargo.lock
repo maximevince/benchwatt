@@ -2282,6 +2282,7 @@ name = "openotii-app"
 version = "0.1.0"
 dependencies = [
  "otii-arc",
+ "otii-rec",
  "serde",
  "serde_json",
  "tauri",
@@ -2311,6 +2312,14 @@ dependencies = [
  "clap",
  "ctrlc",
  "otii-arc",
+]
+
+[[package]]
+name = "otii-rec"
+version = "0.1.0"
+dependencies = [
+ "otii-arc",
+ "serde",
 ]
 
 [[package]]

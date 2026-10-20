@@ -1,4 +1,6 @@
+use otii_arc::prop::{CHANNELS, channel_by_name};
 use otii_arc::{Arc as OtiiArc, Error, Event, PropertyValue, device::find_port};
+use otii_rec::{ChannelSpec, Kind, Recording, View};
 use serde::Serialize;
 use std::{
     sync::{
@@ -12,6 +14,8 @@ use tauri::{Emitter, Manager};
 
 struct DeviceState {
     arc: Mutex<Option<OtiiArc>>,
+    recording: Mutex<Option<Recording>>,
+    uart_open: AtomicBool,
     running: AtomicBool,
 }
 
@@ -192,6 +196,215 @@ fn set_gpo(state: tauri::State<'_, DeviceState>, n: u8, on: bool) -> Result<Sett
     set_and_read(state, |arc| arc.set_gpo(n, on))
 }
 
+#[derive(Clone, Serialize)]
+struct RecordingInfo {
+    active: bool,
+    duration_s: f64,
+    samples: std::collections::HashMap<String, usize>,
+    gaps: usize,
+    channels: Vec<String>,
+}
+fn rec_info(rec: &Recording) -> RecordingInfo {
+    RecordingInfo {
+        active: rec.active(),
+        duration_s: rec.duration(),
+        samples: rec.sample_counts(),
+        gaps: rec.gaps().len(),
+        channels: rec.specs().into_iter().map(|s| s.name).collect(),
+    }
+}
+#[tauri::command]
+fn recording_info(state: tauri::State<'_, DeviceState>) -> Option<RecordingInfo> {
+    state.recording.lock().unwrap().as_ref().map(rec_info)
+}
+#[tauri::command]
+fn start_recording(
+    state: tauri::State<'_, DeviceState>,
+    channels: Vec<String>,
+) -> Result<RecordingInfo, String> {
+    let guard = state.arc.lock().unwrap();
+    let arc = guard.as_ref().ok_or("device disconnected")?;
+    let mut rec_guard = state.recording.lock().unwrap();
+    let mut ids = Vec::new();
+    for name in &channels {
+        let id = channel_by_name(name).ok_or_else(|| format!("unknown channel: {name}"))?;
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    if state.uart_open.load(Ordering::Acquire) && !ids.contains(&0x17) {
+        ids.push(0x17);
+    }
+    if ids.is_empty() {
+        return Err("select at least one channel".into());
+    }
+    let info = arc.info();
+    let specs: Vec<_> = ids
+        .iter()
+        .map(|&id| {
+            let (_, name, unit) = CHANNELS.iter().find(|x| x.0 == id).unwrap();
+            ChannelSpec {
+                id,
+                name: (*name).into(),
+                unit: (*unit).into(),
+                rate_hz: info.chinfo.get(id).rate_hz,
+                kind: match id {
+                    0x16 => Kind::Digital,
+                    0x17 => Kind::Bytes,
+                    _ => Kind::Analog,
+                },
+            }
+        })
+        .collect();
+    if rec_guard.as_ref().is_some_and(Recording::active) {
+        arc.stop_recording().map_err(|e| e.to_string())?;
+        if let Some(rec) = rec_guard.as_mut() {
+            rec.stop();
+        }
+    }
+    arc.start_recording(&ids.iter().map(|&x| x as u32).collect::<Vec<_>>())
+        .map_err(|e| e.to_string())?;
+    let rec = Recording::new(&specs);
+    let result = rec_info(&rec);
+    *rec_guard = Some(rec);
+    Ok(result)
+}
+#[tauri::command]
+fn stop_recording(state: tauri::State<'_, DeviceState>) -> Result<Option<RecordingInfo>, String> {
+    let guard = state.arc.lock().unwrap();
+    let arc = guard.as_ref().ok_or("device disconnected")?;
+    arc.stop_recording().map_err(|e| e.to_string())?;
+    let mut rec = state.recording.lock().unwrap();
+    if let Some(rec) = rec.as_mut() {
+        rec.stop();
+    }
+    Ok(rec.as_ref().map(rec_info))
+}
+#[tauri::command]
+fn get_view(
+    state: tauri::State<'_, DeviceState>,
+    ch: String,
+    t0: f64,
+    t1: f64,
+    px: usize,
+) -> Result<tauri::ipc::Response, String> {
+    if !t0.is_finite() || !t1.is_finite() || t1 < t0 || px == 0 || px > 32768 {
+        return Err("invalid view range".into());
+    }
+    let id = channel_by_name(&ch).ok_or("unknown channel")?;
+    let guard = state.recording.lock().unwrap();
+    let rec = guard.as_ref().ok_or("no recording")?;
+    let view = rec.view(id, t0, t1, px).ok_or("channel is not recorded")?;
+    let mut bytes = Vec::new();
+    match view {
+        View::Raw { t, v } => {
+            bytes.push(0);
+            bytes.extend_from_slice(&(t.len() as u32).to_le_bytes());
+            for (time, value) in t.into_iter().zip(v) {
+                bytes.extend_from_slice(&time.to_le_bytes());
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        View::Envelope { t, min, max } => {
+            bytes.push(1);
+            bytes.extend_from_slice(&(t.len() as u32).to_le_bytes());
+            for ((time, lo), hi) in t.into_iter().zip(min).zip(max) {
+                bytes.extend_from_slice(&time.to_le_bytes());
+                bytes.extend_from_slice(&lo.to_le_bytes());
+                bytes.extend_from_slice(&hi.to_le_bytes());
+            }
+        }
+    }
+    Ok(tauri::ipc::Response::new(bytes))
+}
+#[derive(Serialize)]
+struct AllStats {
+    channels: std::collections::HashMap<String, otii_rec::Stats>,
+    charge_mah: Option<f64>,
+    energy: Option<otii_rec::Energy>,
+}
+#[tauri::command]
+fn get_stats(state: tauri::State<'_, DeviceState>, t0: f64, t1: f64) -> Result<AllStats, String> {
+    if !t0.is_finite() || !t1.is_finite() || t1 <= t0 {
+        return Err("invalid stats range".into());
+    }
+    let guard = state.recording.lock().unwrap();
+    let rec = guard.as_ref().ok_or("no recording")?;
+    Ok(AllStats {
+        channels: rec
+            .specs()
+            .into_iter()
+            .filter_map(|s| rec.stats(s.id, t0, t1).map(|v| (s.name, v)))
+            .collect(),
+        charge_mah: rec.charge_mah(t0, t1),
+        energy: rec.energy(t0, t1),
+    })
+}
+#[tauri::command]
+fn get_uart(state: tauri::State<'_, DeviceState>, t0: f64, t1: f64) -> Vec<otii_rec::UartChunk> {
+    state
+        .recording
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map_or(Vec::new(), |r| r.uart(t0, t1))
+}
+#[tauri::command]
+fn get_edges(state: tauri::State<'_, DeviceState>, t0: f64, t1: f64) -> Vec<otii_rec::Edge> {
+    state
+        .recording
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map_or(Vec::new(), |r| r.edges(t0, t1))
+}
+#[tauri::command]
+fn uart_open(state: tauri::State<'_, DeviceState>, baud: u32) -> Result<(), String> {
+    if baud == 0 || baud > 3_000_000 {
+        return Err("invalid baud rate".into());
+    }
+    let guard = state.arc.lock().unwrap();
+    let arc = guard.as_ref().ok_or("device disconnected")?;
+    arc.uart_open(baud).map_err(|e| e.to_string())?;
+    if let Some(rec) = state.recording.lock().unwrap().as_mut()
+        && rec.active()
+    {
+        rec.add_channel(ChannelSpec {
+            id: 0x17,
+            name: "rx".into(),
+            unit: "".into(),
+            rate_hz: 0,
+            kind: Kind::Bytes,
+        });
+    }
+    state.uart_open.store(true, Ordering::Release);
+    Ok(())
+}
+#[tauri::command]
+fn uart_close(state: tauri::State<'_, DeviceState>) -> Result<(), String> {
+    state
+        .arc
+        .lock()
+        .unwrap()
+        .as_ref()
+        .ok_or("device disconnected")?
+        .uart_close()
+        .map_err(|e| e.to_string())?;
+    state.uart_open.store(false, Ordering::Release);
+    Ok(())
+}
+#[tauri::command]
+fn uart_send(state: tauri::State<'_, DeviceState>, text: String) -> Result<(), String> {
+    state
+        .arc
+        .lock()
+        .unwrap()
+        .as_ref()
+        .ok_or("device disconnected")?
+        .uart_write(text.as_bytes())
+        .map_err(|e| e.to_string())
+}
+
 fn worker(app: tauri::AppHandle) {
     let state = app.state::<DeviceState>();
     while state.running.load(Ordering::Acquire) {
@@ -228,6 +441,7 @@ fn worker(app: tauri::AppHandle) {
             let mut monitor = Monitor::default();
             let mut dirty = false;
             let mut last_emit = Instant::now();
+            let mut last_recording_emit = Instant::now();
             while state.running.load(Ordering::Acquire) {
                 match events.recv_timeout(Duration::from_millis(25)) {
                     Ok(Event::Disconnected)
@@ -271,6 +485,11 @@ fn worker(app: tauri::AppHandle) {
                             settings = Some(next);
                         }
                     }
+                    Ok(Event::Data { ms, block }) => {
+                        if let Some(rec) = state.recording.lock().unwrap().as_mut() {
+                            rec.push_block(ms, &block);
+                        }
+                    }
                     Ok(_) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 }
                 if dirty && last_emit.elapsed() >= Duration::from_millis(100) {
@@ -278,7 +497,20 @@ fn worker(app: tauri::AppHandle) {
                     last_emit = Instant::now();
                     dirty = false;
                 }
+                if last_recording_emit.elapsed() >= Duration::from_millis(250) {
+                    if let Some(rec) = state.recording.lock().unwrap().as_ref()
+                        && rec.active()
+                    {
+                        let _ = app.emit("recording", rec_info(rec));
+                    }
+                    last_recording_emit = Instant::now();
+                }
             }
+            if let Some(rec) = state.recording.lock().unwrap().as_mut() {
+                rec.stop();
+                let _ = app.emit("recording", rec_info(rec));
+            }
+            state.uart_open.store(false, Ordering::Release);
             *state.arc.lock().unwrap() = None;
             let _ = app.emit(
                 "connection",
@@ -295,6 +527,8 @@ fn main() {
     tauri::Builder::default()
         .manage(DeviceState {
             arc: Mutex::new(None),
+            recording: Mutex::new(None),
+            uart_open: AtomicBool::new(false),
             running: AtomicBool::new(true),
         })
         .invoke_handler(tauri::generate_handler![
@@ -303,7 +537,17 @@ fn main() {
             set_voltage,
             set_current_limit,
             set_current_mode,
-            set_gpo
+            set_gpo,
+            start_recording,
+            stop_recording,
+            recording_info,
+            get_view,
+            get_stats,
+            get_uart,
+            get_edges,
+            uart_open,
+            uart_close,
+            uart_send
         ])
         .setup(|app| {
             let handle = app.handle().clone();

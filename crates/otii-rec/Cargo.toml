@@ -1,0 +1,8 @@
+[package]
+name = "otii-rec"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+otii-arc = { path = "../otii-arc" }
+serde = { version = "1", features = ["derive"] }

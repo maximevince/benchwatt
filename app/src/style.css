@@ -809,7 +809,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
 }
-.main-panes-collapsed > .chart-panel {
+.main-panes-collapsed > .chart-panel,
+.main-panes-collapsed > .plot-container {
   flex: 1;
   min-height: 0;
 }
@@ -821,3 +822,35 @@ button:disabled {
 .output-on [data-slot="switch"] {
   background: #10b981 !important;
 }
+.record-dot { display:inline-block;width:8px;height:8px;margin-right:7px;border-radius:50%;background:#ef4444; }
+.record-pulse { animation:record-pulse 1s ease-in-out infinite; }
+@keyframes record-pulse { 50% { opacity:.35; } }
+.channel-row input { width:13px;height:13px;accent-color:var(--foreground);margin-right:3px; }
+.channel-row input:disabled { opacity:.5; }
+.plot-container { position:relative;width:100%;height:100%;min-height:0;display:flex;flex-direction:column; }
+.plot-container > .chart-panel { flex:1;min-height:0; }
+.plot-tabs { position:absolute;top:13px;left:50%;z-index:5;display:flex;gap:2px;padding:2px;border:1px solid var(--border);border-radius:6px;background:var(--panel);transform:translateX(-50%); }
+.plot-tabs button,.recording-toolbar button {border:0;border-radius:4px;background:transparent;color:var(--muted-foreground);font-size:11px;padding:5px 9px;}
+.plot-tabs button.active,.recording-toolbar button.active {background:var(--muted);color:var(--foreground);}
+.recording-panel {height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden;background:var(--background);}
+.recording-toolbar {height:48px;flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--border);}
+.recording-toolbar strong {font-size:14px;}.recording-toolbar span {font:11px "Geist Mono";color:var(--muted-foreground);margin-right:auto;}
+.recording-stage {display:flex;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;}
+.lane-headers {width:156px;flex:none;border-right:1px solid var(--border);}
+.axis-spacer {height:32px;border-bottom:1px solid var(--border);}
+.lane-label {display:flex;align-items:flex-start;gap:8px;padding:9px 10px;border-bottom:1px solid var(--border);font:11px "Geist Mono";}
+.lane-label strong {font-weight:500;}.lane-label button {margin-left:auto;border:0;background:none;color:var(--muted-foreground);padding:0 3px;}
+.lane-current {margin-left:auto;color:var(--muted-foreground);font:10px "Geist Mono";}
+.lane-current + button {margin-left:0;}
+.lane-swatch {width:7px;height:7px;flex:none;border-radius:2px;margin-top:3px;}
+.recording-stage canvas {display:block;flex:none;cursor:crosshair;touch-action:none;}
+.uart-controls,.uart-send {display:flex;align-items:center;gap:10px;padding:8px 12px;}
+.uart-controls input[type=number],.uart-send input {background:var(--background);border:1px solid var(--border);border-radius:4px;color:var(--foreground);padding:5px 7px;font:11px "Geist Mono";}
+.uart-controls input[type=number] {width:100px;}.uart-send input {flex:1;}
+.uart-controls label {display:flex;align-items:center;gap:5px;font-size:11px;}
+.uart-log {max-height:95px;overflow:auto;padding:0 12px;}
+.uart-log button {display:flex;gap:12px;width:100%;text-align:left;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--foreground);padding:4px 0;font:11px "Geist Mono";}
+.uart-log time {color:var(--muted-foreground);}.uart-log code {white-space:pre-wrap;}
+.stats-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;padding:10px 12px;overflow:auto;max-height:100%;}
+.stats-grid div {display:flex;flex-direction:column;gap:3px;}.stats-grid strong {font-size:11px;color:var(--muted-foreground);font-weight:500;}
+.stats-grid code {font:11px "Geist Mono";white-space:normal;overflow-wrap:anywhere;}

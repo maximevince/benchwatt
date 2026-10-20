@@ -119,3 +119,9 @@ Recording: 0x78 per channel → 0x7C … 0x7E → 0x78 disable.
 - `mainsrccurrmode` 0 = cutoff: maxcur 10 mA below load → alert 6 (main-overcurr) and the
   device switches `main` off itself. [V]
 - `mainsrccurrmode` 1 = limit: constant current 9.98 mA, mv sags to 0.976 V, no alert. [V]
+- Recording via otii-rec (`cargo run -p otii-rec --example live`, 100 Ω, 1.8 V, 3 s): mc/mp 12000,
+  mv 3000 samples, 0 gaps; mean 18.11 mA / 1.7998 V / 32.6 mW; UART ticks all received. [V]
+- **Open question — GPI in DATA vs monitor:** recorded gpi masks are 36 (bits 2,5) with gpo1
+  low and 45 (bits 0,2,3,5) with gpo1 high, while the 0x16 monitor reports 0 / 9. Each gpiocfg
+  write also produces a ~1 ms dip (to 9 or 0). Bits 2/5 may be floating inputs or a different bit
+  layout in the data stream; bit 3 tracks gpo1 in both. Unresolved.

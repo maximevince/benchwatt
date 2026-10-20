@@ -1,4 +1,4 @@
-import type { Backend, Command, Events, Settings, Monitor, Connection } from './backend';
+import type { Backend, Command, Events, Settings, Monitor, Connection, RecordingInfo, View, AllStats, UartChunk, Edge, Stats } from './backend';
 
 const disconnected = new URLSearchParams(window.location.search).has('disconnected');
 let connection: Connection = { connected: false };
@@ -9,6 +9,99 @@ function emit<K extends keyof Events>(name: K, value: Events[K]) {
 }
 let phase = 0;
 let spike = 0;
+const rates: Record<string, number> = { mc: 4000, mv: 1000, mp: 4000, ac: 1000, av: 1000, vb: 1000, tp: 1000 };
+let recording: RecordingInfo | null = null;
+let uartOpened = false;
+let pulse = 0;
+let recordingTick = 0;
+let uartLog: UartChunk[] = [];
+let edges: Edge[] = [];
+const values: Record<string, number[]> = {};
+const pyramid: Record<string, { min: number; max: number }[][]> = {};
+function add(ch: string, value: number) {
+  const raw = values[ch] ??= [];
+  raw.push(value);
+  const levels = pyramid[ch] ??= [[]];
+  levels[0].push({ min: value, max: value });
+  let level = 0;
+  while (levels[level].length % 16 === 0) {
+    const batch = levels[level].slice(-16);
+    levels[level + 1] ??= [];
+    levels[level + 1].push({ min: Math.min(...batch.map(x => x.min)), max: Math.max(...batch.map(x => x.max)) });
+    level++;
+  }
+}
+function recTick() {
+  if (!recording?.active) return;
+  const start = recordingTick / 10;
+  if (recordingTick % 10 === 0) {
+    if (recording.channels.includes('gpi')) {
+      edges.push({ t: start, mask: 1 }, { t: start + 0.02, mask: 0 });
+      recording.samples.gpi = edges.length;
+    }
+    if (recording.channels.includes('rx')) {
+      uartLog.push({ t: start, bytes: Array.from(new TextEncoder().encode(`tick ${++pulse}\n`)) });
+      recording.samples.rx = uartLog.reduce((n, x) => n + x.bytes.length, 0);
+    }
+  }
+  for (const ch of recording.channels) {
+    if (!(ch in rates)) continue;
+    const rate = rates[ch];
+    for (let i = 0; i < rate / 10; i++) {
+      const t = start + i / rate;
+      const awake = t % 1 < 0.02;
+      const mc = awake ? 0.03 : 0.00005;
+      const value = ({ mc, mv: 3.3, mp: mc * 3.3, ac: 0, av: 0, vb: 5.05, tp: 23 } as Record<string, number>)[ch];
+      add(ch, value);
+    }
+    recording.samples[ch] = values[ch].length;
+  }
+  recordingTick++;
+  recording = { ...recording, duration_s: recordingTick / 10, samples: { ...recording.samples } };
+  emit('recording', recording);
+}
+window.setInterval(recTick, 100);
+function mockView(ch: string, t0: number, t1: number, px: number): View {
+  const rate = rates[ch], raw = values[ch] ?? [];
+  if (!rate) return { kind: 'raw', t: [], v: [] };
+  const lo = Math.max(0, Math.ceil(t0 * rate)), hi = Math.min(raw.length, Math.floor(t1 * rate) + 1);
+  if (hi - lo <= 2 * px) {
+    const t: number[] = [], v: number[] = [];
+    for (let i = lo; i < hi; i++) { t.push(i / rate); v.push(raw[i]); }
+    return { kind: 'raw', t, v };
+  }
+  const levels = pyramid[ch];
+  let level = 1;
+  while (level + 1 < levels.length && (hi - lo) / 16 ** level > 2 * px) level++;
+  const size = 16 ** level, bins = levels[level] ?? [];
+  const t: number[] = [], min: number[] = [], max: number[] = [];
+  for (let i = Math.floor(lo / size); i < Math.min(bins.length, Math.ceil(hi / size)); i++) {
+    t.push(i * size / rate); min.push(bins[i].min); max.push(bins[i].max);
+  }
+  const tailStart = bins.length * size;
+  if (tailStart < hi && tailStart < raw.length) {
+    const tail = raw.slice(Math.max(tailStart, lo), hi);
+    if (tail.length) {
+      let low = Infinity, high = -Infinity;
+      for (const value of tail) { low = Math.min(low, value); high = Math.max(high, value); }
+      t.push(tailStart / rate); min.push(low); max.push(high);
+    }
+  }
+  return { kind: 'envelope', t, min, max };
+}
+function mockStats(t0: number, t1: number): AllStats {
+  const channels: Record<string, Stats> = {};
+  for (const [ch, raw] of Object.entries(values)) {
+    const rate = rates[ch], slice = raw.slice(Math.max(0, Math.ceil(t0 * rate)), Math.min(raw.length, Math.floor(t1 * rate) + 1));
+    if (!slice.length) continue;
+    let sum = 0, square = 0, min = Infinity, max = -Infinity;
+    for (const x of slice) { sum += x; square += x*x; min = Math.min(min, x); max = Math.max(max, x); }
+    channels[ch] = { count: slice.length, min, max, mean: sum / slice.length, rms: Math.sqrt(square / slice.length), integral: sum / rate };
+  }
+  const charge_mah = channels.mc ? channels.mc.integral / 3.6 : null;
+  const joules = channels.mp?.integral ?? (channels.mc ? channels.mc.integral * 3.3 : null);
+  return { channels, charge_mah, energy: joules == null ? null : { joules, mwh: joules / 3.6, average_power: joules / Math.max(t1 - t0, Number.EPSILON) } };
+}
 function tick() {
   if (!connection.connected) return;
   phase++;
@@ -71,4 +164,23 @@ export const mockBackend: Backend = {
     listeners.set(name, set);
     return () => { set.delete(handler as (value: never) => void); };
   },
+  startRecording: async channels => {
+    if (!connection.connected) fail('device disconnected');
+    for (const key of Object.keys(values)) delete values[key];
+    for (const key of Object.keys(pyramid)) delete pyramid[key];
+    edges = []; uartLog = []; pulse = 0; recordingTick = 0;
+    const selected = [...new Set([...channels, ...(uartOpened ? ['rx'] : [])])];
+    recording = { active: true, duration_s: 0, samples: Object.fromEntries(selected.map(ch => [ch, 0])), gaps: 0, channels: selected };
+    emit('recording', recording);
+    return recording;
+  },
+  stopRecording: async () => { if (recording) { recording = { ...recording, active: false }; emit('recording', recording); } return recording; },
+  recordingInfo: async () => recording,
+  getView: async (ch, t0, t1, px) => mockView(ch, t0, t1, px),
+  getStats: async (t0, t1) => mockStats(t0, t1),
+  getUart: async (t0, t1) => uartLog.filter(x => x.t >= t0 && x.t <= t1),
+  getEdges: async (t0, t1) => edges.filter(x => x.t >= t0 && x.t <= t1),
+  uartOpen: async baud => { if (!Number.isInteger(baud) || baud <= 0) fail('invalid baud rate'); uartOpened = true; if (recording?.active && !recording.channels.includes('rx')) recording = { ...recording, channels: [...recording.channels, 'rx'], samples: { ...recording.samples, rx: 0 } }; },
+  uartClose: async () => { uartOpened = false; },
+  uartSend: async text => { if (!uartOpened) fail('UART closed'); uartLog.push({ t: recording?.duration_s ?? 0, bytes: Array.from(new TextEncoder().encode(text)) }); },
 };
