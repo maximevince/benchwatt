@@ -4,6 +4,7 @@
   import { app } from '$lib/stores.svelte';
   import { formatReading } from '$lib/format';
   import { activeGpi, niceTicks, zoomAt, panFrom, type Range } from '$lib/view-math';
+  import { envelopeRuns, type EnvelopePoint } from '$lib/view';
   let host: HTMLDivElement, canvas: HTMLCanvasElement;
   let width = $state(700), availableHeight = $state(400), version = $state(0);
   let follow = $state(true), selecting = $state(false), cursor = $state<number | null>(null);
@@ -129,12 +130,15 @@
         ctx.lineWidth=1.25; ctx.beginPath(); let lastValid=false;
         view.t.forEach((t,i) => { if (!Number.isFinite(view.v[i])) { lastValid=false; return; } if (lastValid) ctx.lineTo(x(t),y(view.v[i])); else ctx.moveTo(x(t),y(view.v[i])); lastValid=true; }); ctx.stroke();
       } else {
-        const bucketWidth=Math.max(1,width/Math.max(view.t.length,1));
-        for (let i=0;i<view.t.length;i++) {
-          if (!Number.isFinite(view.min[i]) || !Number.isFinite(view.max[i])) continue;
-          const xx=x(view.t[i]), topY=y(view.max[i]), bottomY=y(view.min[i]);
-          ctx.globalAlpha=.45; ctx.fillRect(xx,topY,bucketWidth,Math.max(1,bottomY-topY)); ctx.globalAlpha=1; ctx.lineWidth=1;
-          ctx.beginPath(); ctx.moveTo(xx,topY); ctx.lineTo(xx+bucketWidth,topY); ctx.moveTo(xx,bottomY); ctx.lineTo(xx+bucketWidth,bottomY); ctx.stroke();
+        const traceBoundary=(points: EnvelopePoint[]) => {
+          points.forEach((point,i) => i ? ctx.lineTo(point.x,y(point.value)) : ctx.moveTo(point.x,y(point.value)));
+        };
+        for (const run of envelopeRuns(view,app.viewRange,width)) {
+          ctx.beginPath(); traceBoundary(run.upper);
+          ctx.lineTo(run.upper.at(-1)!.x,y(run.baseline));
+          ctx.lineTo(run.upper[0].x,y(run.baseline));
+          ctx.closePath(); ctx.globalAlpha=.45; ctx.fill(); ctx.globalAlpha=1;
+          ctx.beginPath(); traceBoundary(run.upper); traceBoundary(run.lower); ctx.lineWidth=1; ctx.stroke();
         }
       }
     }
