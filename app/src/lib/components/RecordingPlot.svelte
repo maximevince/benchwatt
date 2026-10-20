@@ -212,7 +212,7 @@
         {#if ch in colors}<div class="lane-value">{currentValue(ch)}</div><div class="lane-mean">mean {meanValue(ch)}</div><div class="lane-actions"><button onclick={() => { locked=locked.includes(ch) ? locked.filter(x => x !== ch) : [...locked,ch]; draw(); }} title="Lock y scale" aria-label={'Lock y scale for '+ch}>{locked.includes(ch) ? '🔒' : '⌁'}</button>{#if ch === 'mc' || ch === 'ac'}<button class:active={logarithmic.includes(ch)} onclick={() => { logarithmic=logarithmic.includes(ch) ? logarithmic.filter(x => x !== ch) : [...logarithmic,ch]; delete scales[ch]; draw(); }} title="Log scale" aria-label={'Log scale for '+ch}>log</button>{/if}</div>{/if}</div>{/if}
     {/each}{#if expandedIdle && idle.length}<button class="idle-collapse" onclick={() => expandedIdle=false}>Collapse idle inputs</button>{/if}</div>
     <div class="plot-surface"><canvas bind:this={canvas} style:width={width+'px'} style:height={height+'px'} onwheel={wheel} onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} ondblclick={fit} onpointerleave={() => { cursor=null; hoveredUart=null; draw(); }}></canvas>
-      {#if hoveredUart}<div class="uart-tooltip" style:left={Math.min(width-180,Math.max(4,x(hoveredUart.t)+8))+'px'} style:top={topOf('rx')+4+'px'}><time>{hoveredUart.t.toFixed(6)} s</time><span>{printable(hoveredUart.bytes)}</span><code>{hex(hoveredUart.bytes)}</code></div>{/if}
+      {#if hoveredUart}<div class="uart-tooltip" style:left={Math.min(width-180,Math.max(4,x(hoveredUart.t)+8))+'px'} style:top={topOf('rx')-4+'px'} style:transform="translateY(-100%)"><time>{hoveredUart.t.toFixed(6)} s</time><span>{printable(hoveredUart.bytes)}</span><code>{hex(hoveredUart.bytes)}</code></div>{/if}
     </div>
   </div>
 </section>
