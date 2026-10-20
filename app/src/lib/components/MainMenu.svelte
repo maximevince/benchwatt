@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from '$lib/stores.svelte';
   import { Menubar, MenubarMenu, MenubarTrigger, MenubarContent, MenubarItem, MenubarSeparator, MenubarShortcut, MenubarSub, MenubarSubTrigger, MenubarSubContent, MenubarCheckboxItem, MenubarRadioGroup, MenubarRadioItem } from '$lib/components/ui/menubar';
+  import { channel } from '$lib/channels';
 </script>
 <Menubar class="main-menu">
   <MenubarMenu><MenubarTrigger>File</MenubarTrigger><MenubarContent>
@@ -18,6 +19,7 @@
     <MenubarItem disabled={!app.recording} onclick={() => app.zoomFit()}>Zoom to fit<MenubarShortcut>F</MenubarShortcut></MenubarItem>
     <MenubarItem disabled={!app.recording} onclick={() => app.zoom(.5)}>Zoom in<MenubarShortcut>+ / =</MenubarShortcut></MenubarItem>
     <MenubarItem disabled={!app.recording} onclick={() => app.zoom(2)}>Zoom out<MenubarShortcut>−</MenubarShortcut></MenubarItem>
+    <MenubarSub><MenubarSubTrigger disabled={!app.hiddenLanes.length}>Hidden lanes</MenubarSubTrigger><MenubarSubContent>{#each app.hiddenLanes as ch}<MenubarItem onclick={() => app.hiddenLanes=app.hiddenLanes.filter(lane => lane !== ch)}>{channel(ch).label}</MenubarItem>{/each}</MenubarSubContent></MenubarSub>
     <MenubarCheckboxItem checked={app.follow} onclick={() => app.follow = !app.follow}>Follow</MenubarCheckboxItem>
     <MenubarItem onclick={() => app.drawerOpen = !app.drawerOpen}>Toggle bottom panel<MenubarShortcut>Ctrl+J</MenubarShortcut></MenubarItem>
     <MenubarSub><MenubarSubTrigger>Theme</MenubarSubTrigger><MenubarSubContent><MenubarRadioGroup value={app.theme}>{#each ['system','light','dark'] as theme}<MenubarRadioItem value={theme} onclick={() => app.setTheme(theme as 'system' | 'light' | 'dark')}>{theme[0].toUpperCase()+theme.slice(1)}</MenubarRadioItem>{/each}</MenubarRadioGroup></MenubarSubContent></MenubarSub>

@@ -30,6 +30,7 @@ class AppState {
   drawerOpen = $state(true);
   recording = $state<RecordingInfo | null>(null);
   recordChannels = $state<string[]>(['mc', 'mv', 'mp']);
+  hiddenLanes = $state<string[]>([]);
   range = $state<[number, number] | null>(null);
   viewRange = $state<[number, number]>([0, 10]);
   stats = $state<AllStats | null>(null);
@@ -91,6 +92,7 @@ class AppState {
       if (this.recording?.active) { this.recording = await backend.stopRecording(); return; }
       if (!await this.confirmDiscard()) return;
       this.recording = await backend.startRecording(this.recordChannels);
+      this.hiddenLanes = [];
       this.range = null;
       this.viewRange = [0, 10];
       this.stats = null;
@@ -115,7 +117,7 @@ class AppState {
   async openRecording() {
     if (!await this.confirmDiscard()) return;
     try { const path = this.mock() ? 'mock.otii-rec' : await open({ multiple: false, filters: [{ name: 'OpenOtii recording', extensions: ['otii-rec'] }] });
-      if (typeof path !== 'string') return; this.recording = await backend.loadRecording(path); this.fileName = path.split(/[\\/]/).pop() ?? path; this.unsaved = false; this.range = null; this.uart = []; this.edges = []; this.viewRange = [0, Math.max(this.recording.duration_s, .001)]; await this.refreshDetails();
+      if (typeof path !== 'string') return; this.recording = await backend.loadRecording(path); this.fileName = path.split(/[\\/]/).pop() ?? path; this.unsaved = false; this.hiddenLanes = []; this.range = null; this.uart = []; this.edges = []; this.viewRange = [0, Math.max(this.recording.duration_s, .001)]; await this.refreshDetails();
     } catch (cause) { this.report(cause); }
   }
   async exportRecording(extension: 'csv' | 'sr', selected = false) {

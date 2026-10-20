@@ -7,11 +7,14 @@
   import SelectionCard from './SelectionCard.svelte';
   import { activeGpi, niceTicks, zoomAt, panFrom, type Range } from '$lib/view-math';
   import { envelopeRuns, type EnvelopePoint } from '$lib/view';
-  import { lineStartForChunk } from '$lib/uart';
+  import { lineStartForChunk, linesFromChunks } from '$lib/uart';
+  import { valuesAtTimeTsv } from '$lib/point-values';
+  import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent, ContextMenuCheckboxItem } from '$lib/components/ui/context-menu';
   let host: HTMLDivElement, canvas: HTMLCanvasElement;
   let width = $state(700), availableHeight = $state(400), version = $state(0);
   let selecting = $state(false), cursor = $state<number | null>(null);
   let expandedIdle = $state(false), hoveredUart = $state<UartChunk | null>(null);
+  let menuTime = $state(0), menuUart = $state<UartChunk | null>(null);
   let locked = $state<string[]>([]), logarithmic = $state<string[]>([]);
   let scales: Record<string, Range> = {}, visibleMeans: Record<string, number> = {}, sampleSpacing = Infinity, previousDuration = 0, wasActive = false, queued = false;
   const views = new Map<string, View>(), inflight = new Set<string>();
@@ -19,7 +22,7 @@
   const analog = $derived((app.recording?.channels ?? []).filter(ch => channel(ch).kind === 'analog'));
   const active = $derived(activeGpi(app.edges));
   const idle = $derived([1,2,3,4,5,6].filter(n => !active.includes(n)));
-  const lanes = $derived([...analog, ...(app.recording?.channels.includes('gpi') ? [...active.map(n => 'gpi'+n), ...(idle.length ? expandedIdle ? idle.map(n => 'gpi'+n) : ['idle'] : [])] : []), ...(app.recording?.channels.some(ch => ch === 'rx' || ch === 'tx') ? ['rx'] : [])]);
+  const lanes = $derived([...analog, ...(app.recording?.channels.includes('gpi') ? [...active.map(n => 'gpi'+n), ...(idle.length ? expandedIdle ? idle.map(n => 'gpi'+n) : ['idle'] : [])] : []), ...(app.recording?.channels.some(ch => ch === 'rx' || ch === 'tx') ? ['rx'] : [])].filter(ch => !app.hiddenLanes.includes(ch)));
   const analogHeight = $derived(Math.max(110, (availableHeight - 32 - lanes.filter(ch => ch.startsWith('gpi') || ch === 'idle').length * 24 - (lanes.includes('rx') ? 44 : 0)) / Math.max(analog.length, 1)));
   const laneHeight = (ch: string) => ch === 'rx' ? 44 : ch.startsWith('gpi') || ch === 'idle' ? 24 : analogHeight;
   const height = $derived(32 + lanes.reduce((sum, ch) => sum + laneHeight(ch), 0));
@@ -168,7 +171,23 @@
     if (cursor != null) { const xx=x(cursor); ctx.strokeStyle=color('--foreground'); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(xx+.5,24); ctx.lineTo(xx+.5,height); ctx.stroke(); const left=Math.max(0,Math.min(xx+4,width-82)); ctx.fillStyle=color('--background'); ctx.fillRect(left,1,80,19); ctx.fillStyle=color('--foreground'); ctx.fillText(formatTime(cursor,span),left+2,15); }
   }
   function wheel(event: WheelEvent) { event.preventDefault(); app.follow=false; app.viewRange=zoomAt(app.viewRange,time(event.offsetX),Math.exp(event.deltaY*.001),duration(),minimumSpan()); schedule(); }
+  function toggleLock(ch: string) { locked=locked.includes(ch) ? locked.filter(x => x !== ch) : [...locked,ch]; draw(); }
+  function toggleLog(ch: string) { logarithmic=logarithmic.includes(ch) ? logarithmic.filter(x => x !== ch) : [...logarithmic,ch]; delete scales[ch]; draw(); }
+  function autoscale(ch: string) { locked=locked.filter(x => x !== ch); delete scales[ch]; draw(); }
+  function zoomHere(factor: number) { app.follow=false; app.viewRange=zoomAt(app.viewRange,menuTime,factor,duration(),minimumSpan()); schedule(); }
+  function centerHere() { const span=app.viewRange[1]-app.viewRange[0]; app.follow=false; app.viewRange=panFrom(app.viewRange,(app.viewRange[0]+span/2-menuTime)/span*width,width,duration(),minimumSpan()); schedule(); }
+  async function copyPoint() { try { await navigator.clipboard.writeText(valuesAtTimeTsv(menuTime,analog,views)); } catch (cause) { app.report(cause); } }
+  function uartAt(px: number, py: number) {
+    if (!lanes.includes('rx') || py < topOf('rx') || py > topOf('rx')+44) return null;
+    const tx=py > topOf('rx')+21;
+    return app.uart.slice(Math.max(0,uartIndex(time(px))-8),uartIndex(time(px))+2).filter(chunk => (chunk.dir === 'tx') === tx && px >= x(chunk.t)-6 && px <= x(chunk.t)+Math.max(8,printable(chunk.bytes).length*6+12)).at(-1) ?? null;
+  }
+  function plotContext(event: MouseEvent) { menuTime=Math.max(0,Math.min(duration(),time(event.offsetX))); menuUart=uartAt(event.offsetX,event.offsetY); }
+  function showUartInConsole() { if (!menuUart) return; const start=lineStartForChunk(app.uart,app.uart.indexOf(menuUart)); if (start === null) return; app.focusedUartTime=start; app.drawerTab='uart'; app.drawerOpen=true; }
+  function contextUartLine() { if (!menuUart) return null; const start=lineStartForChunk(app.uart,app.uart.indexOf(menuUart)); return linesFromChunks(app.uart).find(line => line.t === start && line.dir === menuUart?.dir) ?? null; }
+  function copyUartLine(asHex = false) { const line=contextUartLine(); if (!line) return; const value=asHex ? line.bytes.map(byte => byte.toString(16).padStart(2,'0').toUpperCase()).join(' ') : line.text; void navigator.clipboard.writeText(value); }
   function down(event: PointerEvent) {
+    if (event.button !== 0) return;
     try { canvas.setPointerCapture(event.pointerId); } catch { /* Synthetic pointer events have no active pointer. */ }
     const at=time(event.offsetX);
     const start=app.range && Math.abs(x(app.range[0])-event.offsetX)<7, end=app.range && Math.abs(x(app.range[1])-event.offsetX)<7;
@@ -183,9 +202,14 @@
       else if (drag.mode === 'end' && app.range) app.range=[app.range[0],Math.max(cursor,app.range[0])];
       else { app.follow=false; app.viewRange=panFrom(drag.range,event.offsetX-drag.x,width,duration(),minimumSpan()); }
       schedule();
-    } else { if (lanes.includes('rx') && event.offsetY >= topOf('rx') && event.offsetY <= topOf('rx')+44) { const tx=event.offsetY > topOf('rx')+21; hoveredUart=app.uart.slice(Math.max(0,uartIndex(time(event.offsetX))-8),uartIndex(time(event.offsetX))+2).filter(chunk => (chunk.dir === 'tx') === tx && event.offsetX >= x(chunk.t)-6 && event.offsetX <= x(chunk.t)+Math.max(8,printable(chunk.bytes).length*6+12)).at(-1) ?? null; } else hoveredUart=null; app.focusedUartTime=hoveredUart ? lineStartForChunk(app.uart,app.uart.indexOf(hoveredUart)) : null; draw(); }
+    } else { hoveredUart=uartAt(event.offsetX,event.offsetY); app.focusedUartTime=hoveredUart ? lineStartForChunk(app.uart,app.uart.indexOf(hoveredUart)) : null; draw(); }
   }
-  function up() { drag=null; if (app.range && app.range[1]-app.range[0]<1e-6) app.range=null; void app.refreshDetails(); }
+  function up(event: PointerEvent) { if (event.type === 'pointerup' && event.button !== 0) return; drag=null; if (app.range && app.range[1]-app.range[0]<1e-6) app.range=null; void app.refreshDetails(); }
+  function zoomToSelection() {
+    if (!app.range) return;
+    const pad=(app.range[1]-app.range[0])*.05;
+    app.follow=false; app.viewRange=[Math.max(0,app.range[0]-pad),Math.min(duration(),app.range[1]+pad)];
+  }
   function fit() { app.follow=false; app.viewRange=[0,duration()]; schedule(); }
   function keydown(event: KeyboardEvent) { if (event.key === 'Escape') { app.range=null; void app.refreshDetails(); draw(); } }
   onMount(() => { const observer=new ResizeObserver(() => { width=Math.max(1,host.clientWidth-150); availableHeight=Math.max(1,host.clientHeight); schedule(); }); observer.observe(host); window.addEventListener('keydown',keydown); return () => { observer.disconnect(); window.removeEventListener('keydown',keydown); }; });
@@ -210,10 +234,12 @@
   <div class="recording-stage" bind:this={host}>
     <div class="lane-headers"><div class="axis-spacer"></div>{#each lanes as ch}
       {#if ch === 'idle'}<button class="idle-lane" style:height={laneHeight(ch)+'px'} onclick={() => expandedIdle=true}>Digital in {idle.length > 1 && idle.every((n,i) => n === idle[0]+i) ? idle[0]+'–'+idle.at(-1) : idle.join(', ')} idle ▾</button>
-      {:else}<div class="lane-label" style:height={laneHeight(ch)+'px'}><div class="lane-name"><span class="lane-swatch" style:background={'var(--'+channel(ch).color+')'}></span><strong title={ch}>{ch === 'rx' && app.recording?.channels.includes('tx') ? app.recording.channels.includes('rx') ? 'UART RX / TX' : channel('tx').label : channel(ch).label}</strong><small>{channel(ch).kind === 'analog' ? unit(ch) : ''}</small></div>
-        {#if channel(ch).kind === 'analog'}<div class="lane-value">{currentValue(ch)}</div><div class="lane-mean">mean {meanValue(ch)}</div><div class="lane-actions"><button onclick={() => { locked=locked.includes(ch) ? locked.filter(x => x !== ch) : [...locked,ch]; draw(); }} title="Lock y scale" aria-label={'Lock y scale for '+channel(ch).label}>{locked.includes(ch) ? '🔒' : '⌁'}</button>{#if channel(ch).unitKind === 'current'}<button class:active={logarithmic.includes(ch)} onclick={() => { logarithmic=logarithmic.includes(ch) ? logarithmic.filter(x => x !== ch) : [...logarithmic,ch]; delete scales[ch]; draw(); }} title="Log scale" aria-label={'Log scale for '+channel(ch).label}>log</button>{/if}</div>{/if}</div>{/if}
+      {:else}<ContextMenu><ContextMenuTrigger class="lane-label" style={'height:'+laneHeight(ch)+'px'}><div class="lane-name"><span class="lane-swatch" style:background={'var(--'+channel(ch).color+')'}></span><strong title={ch}>{ch === 'rx' && app.recording?.channels.includes('tx') ? app.recording.channels.includes('rx') ? 'UART RX / TX' : channel('tx').label : channel(ch).label}</strong><small>{channel(ch).kind === 'analog' ? unit(ch) : ''}</small></div>
+        {#if channel(ch).kind === 'analog'}<div class="lane-value">{currentValue(ch)}</div><div class="lane-mean">mean {meanValue(ch)}</div><div class="lane-actions"><button onclick={() => toggleLock(ch)} title="Lock y scale" aria-label={'Lock y scale for '+channel(ch).label}>{locked.includes(ch) ? '🔒' : '⌁'}</button>{#if channel(ch).unitKind === 'current'}<button class:active={logarithmic.includes(ch)} onclick={() => toggleLog(ch)} title="Log scale" aria-label={'Log scale for '+channel(ch).label}>log</button>{/if}</div>{/if}</ContextMenuTrigger>
+        <ContextMenuContent class="plot-context-menu"><ContextMenuCheckboxItem disabled={channel(ch).kind !== 'analog'} checked={locked.includes(ch)} onclick={() => toggleLock(ch)}>Lock y scale</ContextMenuCheckboxItem><ContextMenuCheckboxItem disabled={channel(ch).unitKind !== 'current'} checked={logarithmic.includes(ch)} onclick={() => toggleLog(ch)}>Log scale</ContextMenuCheckboxItem><ContextMenuItem disabled={channel(ch).kind !== 'analog'} onclick={() => autoscale(ch)}>Autoscale now</ContextMenuItem><ContextMenuSeparator/><ContextMenuItem onclick={() => app.hiddenLanes=[...app.hiddenLanes,ch]}>Hide lane</ContextMenuItem><ContextMenuSub><ContextMenuSubTrigger disabled={!app.hiddenLanes.length}>Hidden lanes</ContextMenuSubTrigger><ContextMenuSubContent class="plot-context-menu">{#each app.hiddenLanes as hidden}<ContextMenuItem onclick={() => app.hiddenLanes=app.hiddenLanes.filter(lane => lane !== hidden)}>{channel(hidden).label}</ContextMenuItem>{/each}</ContextMenuSubContent></ContextMenuSub></ContextMenuContent></ContextMenu>{/if}
     {/each}{#if expandedIdle && idle.length}<button class="idle-collapse" onclick={() => expandedIdle=false}>Collapse idle inputs</button>{/if}</div>
-    <div class="plot-surface"><canvas bind:this={canvas} style:width={width+'px'} style:height={height+'px'} onwheel={wheel} onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} ondblclick={fit} onpointerleave={() => { cursor=null; hoveredUart=null; draw(); }}></canvas>
+    <div class="plot-surface"><ContextMenu><ContextMenuTrigger><canvas bind:this={canvas} style:width={width+'px'} style:height={height+'px'} onwheel={wheel} oncontextmenu={plotContext} onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} ondblclick={fit} onpointerleave={() => { cursor=null; hoveredUart=null; draw(); }}></canvas></ContextMenuTrigger>
+      <ContextMenuContent class="plot-context-menu">{#if menuUart}<ContextMenuItem onclick={() => copyUartLine()}>Copy line</ContextMenuItem><ContextMenuItem onclick={() => copyUartLine(true)}>Copy as hex</ContextMenuItem><ContextMenuItem onclick={showUartInConsole}>Show in console</ContextMenuItem><ContextMenuSeparator/>{/if}<ContextMenuItem disabled={!app.range} onclick={zoomToSelection}>Zoom to selection</ContextMenuItem><ContextMenuItem disabled={!app.range || !app.stats} onclick={() => void app.copyStats()}>Copy selection stats<ContextMenuShortcut>Ctrl+Shift+C</ContextMenuShortcut></ContextMenuItem><ContextMenuSub><ContextMenuSubTrigger disabled={!app.range}>Export selection</ContextMenuSubTrigger><ContextMenuSubContent class="plot-context-menu"><ContextMenuItem onclick={() => void app.exportRecording('csv',true)}>CSV…</ContextMenuItem><ContextMenuItem onclick={() => void app.exportRecording('sr',true)}>sigrok session (.sr)…</ContextMenuItem></ContextMenuSubContent></ContextMenuSub><ContextMenuItem disabled={!app.range} onclick={() => app.clearSelection()}>Clear selection<ContextMenuShortcut>Esc</ContextMenuShortcut></ContextMenuItem><ContextMenuSeparator/><ContextMenuItem onclick={() => app.zoomFit()}>Zoom to fit<ContextMenuShortcut>F</ContextMenuShortcut></ContextMenuItem><ContextMenuItem onclick={() => zoomHere(.5)}>Zoom in here</ContextMenuItem><ContextMenuItem onclick={() => zoomHere(2)}>Zoom out here</ContextMenuItem><ContextMenuItem onclick={centerHere}>Center view here</ContextMenuItem><ContextMenuItem onclick={() => void copyPoint()}>Copy time and values at this point</ContextMenuItem></ContextMenuContent></ContextMenu>
       {#if app.range}<SelectionCard range={app.range} viewRange={app.viewRange} {width} stats={app.stats}/>{/if}
       {#if hoveredUart}<div class="uart-tooltip" style:left={Math.min(width-180,Math.max(4,x(hoveredUart.t)+8))+'px'} style:top={topOf('rx')-4+'px'} style:transform="translateY(-100%)"><time>{hoveredUart.t.toFixed(6)} s</time><span>{printable(hoveredUart.bytes)}</span><code>{hex(hoveredUart.bytes)}</code></div>{/if}
     </div>

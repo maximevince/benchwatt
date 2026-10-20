@@ -813,6 +813,8 @@ button:disabled {
 .main-menu { margin-left: 10px; padding: 0; border: 0; background: transparent; box-shadow: none; font-size: 13px; }
 .main-menu [data-slot="menubar-trigger"] { font-size: 13px; padding: 5px 8px; }
 [data-slot="menubar-shortcut"] { font-family: 'Geist Mono'; font-size: 11px; margin-left: auto; padding-left: 28px; }
+[data-slot="context-menu-content"], [data-slot="context-menu-sub-content"] { min-width: 210px; font-size: 13px; }
+[data-slot="context-menu-shortcut"] { font-family: 'Geist Mono'; font-size: 11px; margin-left: auto; padding-left: 28px; }
 [data-slot="menubar-content"], [data-slot="menubar-sub-content"] { min-width: 210px; }
 .topbar-right { margin-left: auto; }
 .file-name { color: var(--muted-foreground); font: 11px 'Geist Mono'; margin-left: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -834,3 +836,4 @@ button:disabled {
 .uart-line mark { background: color-mix(in srgb, var(--uart) 28%, transparent); color: inherit; border-radius: 2px; }
 .unsaved-dot { display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--muted-foreground); vertical-align: middle; }
 .file-name { margin-left: 18px; padding-left: 14px; border-left: 1px solid var(--border); }
+[data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="menubar-content"] { outline: none; }

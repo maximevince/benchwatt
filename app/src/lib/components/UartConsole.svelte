@@ -4,10 +4,12 @@
   import { backend } from '$lib/backend';
   import { linesFromChunks, filterLines, linesInRange, formatUartTime, type UartLine } from '$lib/uart';
   import { Button } from '$lib/components/ui/button';
+  import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut } from '$lib/components/ui/context-menu';
   let query = $state(''), showTx = $state(true), showTimes = $state(true), hex = $state(false);
   let ending = $state('LF'), outgoing = $state(''), history: string[] = [], historyIndex = -1;
   let cutoff = $state(-1), scroll = $state(0), viewport = $state(180), scroller: HTMLDivElement;
   let pinned = $state(true), anchor = $state<number | null>(null);
+  let contextLine = $state<UartLine | null>(null);
   const rowHeight = 24;
   const all = $derived(linesFromChunks(app.uart).filter(x => x.t > cutoff));
   const filtered = $derived(filterLines(all,query,showTx));
@@ -29,6 +31,12 @@
     if (shift && anchor !== null) { app.range=[Math.min(anchor,line.t),Math.max(anchor,line.t)+.001]; void app.refreshDetails(); }
     else { anchor=line.t; app.range=null; app.centerUart(line.t); }
   }
+  function clearView() { cutoff=app.recording?.duration_s ?? 0; }
+  function contextLines() { return contextLine ? highlighted(contextLine) && app.range ? inRange : [contextLine] : []; }
+  function copyLines(lines: UartLine[], asHex = false) {
+    if (!lines.length) return;
+    void navigator.clipboard.writeText(lines.map(x => `${showTimes ? formatUartTime(x.t,app.viewRange[1]-app.viewRange[0])+'\t' : ''}${x.dir === 'tx' ? '→ ' : ''}${asHex ? x.bytes.map(byte => byte.toString(16).padStart(2,'0').toUpperCase()).join(' ') : asText(x)}`).join('\n'));
+  }
   async function send() {
     if (!outgoing || !app.uartOpen) return;
     const raw=outgoing, suffix=ending === 'LF' ? '\n' : ending === 'CRLF' ? '\r\n' : '';
@@ -44,7 +52,7 @@
     if (!(event.ctrlKey && event.key.toLowerCase() === 'c') || (event.target as HTMLElement).closest('input, textarea, select')) return;
     const lines=app.range ? inRange : filtered.filter(x => x.t === app.focusedUartTime);
     if (!lines.length) return;
-    event.preventDefault(); void navigator.clipboard.writeText(lines.map(x => `${showTimes ? formatUartTime(x.t,app.viewRange[1]-app.viewRange[0])+'\t' : ''}${x.dir === 'tx' ? '→ ' : ''}${asText(x)}`).join('\n'));
+    event.preventDefault(); copyLines(lines);
   }
   $effect(() => { const count=filtered.length; if (pinned && scroller) { tick().then(() => { if (scroller) scroller.scrollTop=scroller.scrollHeight; }); } void count; });
   $effect(() => { const t=app.focusedUartTime; if (t !== null && scroller) tick().then(() => scrollTo(t)); });
@@ -57,7 +65,7 @@
     <button class:active={!hex} onclick={() => hex=false}>ASCII</button><button class:active={hex} onclick={() => hex=true}>Hex</button>
     <label><input type="checkbox" bind:checked={showTx}/> Show TX</label><label><input type="checkbox" bind:checked={showTimes}/> Timestamps</label>
     <input class="uart-filter" placeholder="Filter lines…" aria-label="Filter UART lines" bind:value={query}/>
-    <button onclick={() => cutoff=app.recording?.duration_s ?? 0}>Clear view</button><span class="uart-count">{filtered.length} lines</span>
+    <button onclick={clearView}>Clear view</button><span class="uart-count">{filtered.length} lines</span>
   </div>
   <div class="uart-viewport" bind:this={scroller} bind:clientHeight={viewport} onscroll={onScroll}>
     {#if query && filtered.length === 0 && all.length > 0}<p class="empty-state">No lines match “{query}”</p>
@@ -65,9 +73,9 @@
     {:else if !app.recording?.active && filtered.length === 0}<p class="empty-state">RX is captured while recording (press R)</p>{/if}
     <div style:height={filtered.length*rowHeight+'px'} class="uart-virtual-space">
       {#each visible as line, i (line.id)}
-        <button class="uart-line" class:tx={line.dir === 'tx'} class:selected={highlighted(line)} class:hovered={app.focusedUartTime === line.t} style:top={((first+i)*rowHeight)+'px'} onclick={e => select(line,e.shiftKey)} onmouseenter={() => app.hoverMarker=line.t} onmouseleave={() => app.hoverMarker=null}>
+        <ContextMenu><ContextMenuTrigger class={'uart-line'+(line.dir === 'tx' ? ' tx' : '')+(highlighted(line) ? ' selected' : '')+(app.focusedUartTime === line.t ? ' hovered' : '')} style={'top:'+((first+i)*rowHeight)+'px'} onclick={e => select(line,e.shiftKey)} oncontextmenu={() => contextLine=line} onmouseenter={() => app.hoverMarker=line.t} onmouseleave={() => app.hoverMarker=null}>
           {#if showTimes}<time>{formatUartTime(line.t,app.viewRange[1]-app.viewRange[0])}</time>{/if}<span class="uart-direction">{line.dir === 'tx' ? '→' : ' '}</span><code>{#each segments(asText(line)) as part}{#if part.match}<mark>{part.text}</mark>{:else}{part.text}{/if}{/each}</code>
-        </button>
+        </ContextMenuTrigger><ContextMenuContent class="plot-context-menu"><ContextMenuItem onclick={() => copyLines(contextLines())}>Copy line(s)<ContextMenuShortcut>Ctrl+C</ContextMenuShortcut></ContextMenuItem><ContextMenuItem onclick={() => copyLines(contextLines(),true)}>Copy as hex</ContextMenuItem><ContextMenuItem onclick={() => select(line,false)}>Show in plot</ContextMenuItem><ContextMenuItem disabled={anchor === null} onclick={() => select(line,true)}>Select range to here<ContextMenuShortcut>Shift+Click</ContextMenuShortcut></ContextMenuItem><ContextMenuItem onclick={() => query=line.text}>Filter by this text</ContextMenuItem><ContextMenuSeparator/><ContextMenuItem onclick={clearView}>Clear view</ContextMenuItem></ContextMenuContent></ContextMenu>
       {/each}
     </div>
   </div>
