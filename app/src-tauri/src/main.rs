@@ -341,7 +341,7 @@ fn get_view(
 }
 #[derive(Serialize)]
 struct AllStats {
-    channels: std::collections::HashMap<String, otii_rec::Stats>,
+    channels: std::collections::BTreeMap<String, otii_rec::Stats>,
     charge_mah: Option<f64>,
     energy: Option<otii_rec::Energy>,
 }

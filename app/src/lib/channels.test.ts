@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { channel, channels } from './channels';
+import { orderedEntries, channel, channels } from './channels';
 
 describe('channel labels', () => {
   it('provides the required human names and units', () => {
@@ -12,5 +12,11 @@ describe('channel labels', () => {
   it('falls back to the protocol id for unknown channels', () => {
     expect(channel('future').label).toBe('future');
     expect(channel('future').short).toBe('future');
+  });
+});
+
+describe('orderedEntries', () => {
+  it('uses the fixed channel order regardless of key order', () => {
+    expect(orderedEntries({ mp: 3, zz: 9, mc: 1, mv: 2 }).map(([id]) => id)).toEqual(['mc', 'mv', 'mp', 'zz']);
   });
 });

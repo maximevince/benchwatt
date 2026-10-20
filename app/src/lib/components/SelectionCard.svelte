@@ -1,17 +1,17 @@
 <script lang="ts">
   import type { AllStats } from '$lib/backend';
-  import { channel } from '$lib/channels';
+  import { orderedEntries, channel } from '$lib/channels';
   import { formatReading } from '$lib/format';
   import { app } from '$lib/stores.svelte';
   import { Copy, ChevronDown, ChevronUp, X } from 'lucide-svelte';
 
   let { range, viewRange, width, stats }: { range: [number, number]; viewRange: [number, number]; width: number; stats: AllStats | null } = $props();
   let collapsed = $state(sessionStorage.getItem('selection-card-collapsed') === 'true');
-  const cardWidth = $derived(Math.min(collapsed ? 240 : 400, Math.max(0, width - 8)));
+  const cardWidth = $derived(Math.min(collapsed ? 330 : 400, Math.max(0, width - 8)));
   const start = $derived((range[0] - viewRange[0]) / (viewRange[1] - viewRange[0]) * width);
   const end = $derived((range[1] - viewRange[0]) / (viewRange[1] - viewRange[0]) * width);
   const left = $derived(Math.max(4, Math.min(width - cardWidth - 4, end + 8 + cardWidth <= width ? end + 8 : start - cardWidth - 8)));
-  const analog = $derived(Object.entries(stats?.channels ?? {}).filter(([id]) => channel(id).kind === 'analog'));
+  const analog = $derived(orderedEntries(stats?.channels ?? {}).filter(([id]) => channel(id).kind === 'analog'));
   const hasPower = $derived(analog.some(([id]) => channel(id).unitKind === 'power'));
   const hasCurrent = $derived(analog.some(([id]) => channel(id).unitKind === 'current'));
   const hasVoltage = $derived(analog.some(([id]) => channel(id).unitKind === 'voltage'));

@@ -23,3 +23,10 @@ export function channel(id: string): Channel {
   if (/^gpi[1-6]$/.test(id)) return { ...channels.gpi, label: `Digital in ${id.slice(3)}`, short: `Digital in ${id.slice(3)}` };
   return channels[id] ?? { label: id, short: id, unit: '', unitKind: 'voltage', color: 'aux', kind: 'analog' };
 }
+
+const order = Object.keys(channels);
+/** Entries of a per-channel record in the fixed order of `channels` (unknown ids last). */
+export function orderedEntries<T>(record: Record<string, T>): [string, T][] {
+  const rank = (id: string) => { const i = order.indexOf(id); return i < 0 ? order.length : i; };
+  return Object.entries(record).sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
+}
