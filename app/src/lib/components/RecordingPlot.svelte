@@ -122,7 +122,8 @@
       const y=(v: number) => bottom-8-(transform(v)-min)/(max-min)*(laneHeight(ch)-16);
       const ticks=niceTicks(min,max,5);
       const tickStep=ticks.length > 1 ? ticks[1]-ticks[0] : max-min;
-      for (const tick of ticks) { const yy=bottom-8-(tick-min)/(max-min)*(laneHeight(ch)-16); ctx.strokeStyle=color('--border'); ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(width,yy); ctx.stroke(); ctx.fillStyle=color('--muted-foreground'); ctx.fillText(log ? reading(10**tick,ch) : axisReading(tick,tickStep,ch),4,yy-3); }
+      const eps=(max-min)*1e-6;
+      for (const tick of ticks.filter(t => t >= min-eps && t <= max+eps)) { const yy=bottom-8-(tick-min)/(max-min)*(laneHeight(ch)-16); ctx.strokeStyle=color('--border'); ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(width,yy); ctx.stroke(); ctx.fillStyle=color('--muted-foreground'); ctx.fillText(log ? reading(10**tick,ch) : axisReading(tick,tickStep,ch),4,yy-3); }
       const trace=color(colors[ch].slice(4,-1)); ctx.strokeStyle=trace; ctx.fillStyle=trace;
       if (view.kind === 'raw') {
         ctx.lineWidth=1.25; ctx.beginPath(); let lastValid=false;
