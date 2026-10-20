@@ -5,9 +5,11 @@ use crate::{
 };
 use std::{
     collections::HashMap,
+    fmt,
     io::{Read, Write},
     sync::{
         Arc as StdArc, Mutex,
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, Sender},
     },
     thread,
@@ -23,6 +25,24 @@ pub enum Error {
     Property(String),
     Closed,
 }
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Serial(s) => write!(f, "serial error: {s}"),
+            Self::Timeout => write!(f, "device response timed out"),
+            Self::Protocol(s) => write!(f, "protocol error: {s}"),
+            Self::Status(n) => write!(f, "device status {n}"),
+            Self::Property(s) => write!(f, "property error: {s}"),
+            Self::Closed => write!(f, "device connection closed"),
+        }
+    }
+}
+impl std::error::Error for Error {}
+impl serde::Serialize for Error {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
         Self::Serial(e.to_string())
@@ -30,6 +50,7 @@ impl From<std::io::Error> for Error {
 }
 #[derive(Debug, Clone)]
 pub enum Event {
+    Disconnected,
     Monitor { ch: u32, value: f32 },
     Gpi(u32),
     Property { id: u32, raw: Vec<u8> },
@@ -49,6 +70,7 @@ pub struct Info {
 }
 type Response = (i32, Vec<u8>);
 struct Inner {
+    closed: AtomicBool,
     writer: Mutex<Box<dyn Write + Send>>,
     next: Mutex<u32>,
     pending: Mutex<HashMap<u32, Sender<Response>>>,
@@ -149,6 +171,7 @@ impl Arc {
     ) -> Self {
         let (stop_tx, stop_rx) = mpsc::channel();
         let inner = StdArc::new(Inner {
+            closed: AtomicBool::new(false),
             writer: Mutex::new(Box::new(writer)),
             next: Mutex::new(0),
             pending: Mutex::new(HashMap::new()),
@@ -170,7 +193,12 @@ impl Arc {
                     {
                         0
                     }
-                    Err(_) => break,
+                    Err(_) => {
+                        shared.closed.store(true, Ordering::Release);
+                        shared.pending.lock().unwrap().clear();
+                        broadcast(&shared, Event::Disconnected);
+                        break;
+                    }
                 };
                 if n == 0 {
                     continue;
@@ -260,6 +288,9 @@ impl Arc {
         data: &[u8],
         timeout: Duration,
     ) -> Result<Vec<u8>, Error> {
+        if self.inner.closed.load(Ordering::Acquire) {
+            return Err(Error::Closed);
+        }
         let (tx, rx) = mpsc::channel();
         let txn = {
             let mut next = self.inner.next.lock().unwrap();
@@ -268,6 +299,10 @@ impl Arc {
             txn
         };
         self.inner.pending.lock().unwrap().insert(txn, tx);
+        if self.inner.closed.load(Ordering::Acquire) {
+            self.inner.pending.lock().unwrap().remove(&txn);
+            return Err(Error::Closed);
+        }
         let mut payload = Vec::with_capacity(8 + data.len());
         payload.extend_from_slice(&txn.to_le_bytes());
         payload.extend_from_slice(&cmd.to_le_bytes());
@@ -280,7 +315,11 @@ impl Arc {
             .write_all(&frame::encode(&payload));
         if let Err(e) = write_result {
             self.inner.pending.lock().unwrap().remove(&txn);
-            return Err(e.into());
+            return if self.inner.closed.load(Ordering::Acquire) {
+                Err(Error::Closed)
+            } else {
+                Err(e.into())
+            };
         }
         let result = rx.recv_timeout(timeout);
         self.inner.pending.lock().unwrap().remove(&txn);

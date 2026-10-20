@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/otii-arc", "crates/otii-cli"]
+members = ["crates/otii-arc", "crates/otii-cli", "app/src-tauri"]
 
 [workspace.package]
 edition = "2024"

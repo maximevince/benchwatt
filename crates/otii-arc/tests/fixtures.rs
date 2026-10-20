@@ -1,5 +1,5 @@
 use otii_arc::{
-    Arc, Error,
+    Arc, Error, Event,
     frame::{self, Decoder},
     msg::{self, BlockBody, Message, UpdateValue},
     prop::{self, ChannelKind, ChannelTable, PropertyValue},
@@ -186,4 +186,35 @@ fn out_of_order_responses_and_timeout() {
         assert_eq!(second.join().unwrap().unwrap(), 0x80u32.to_le_bytes());
     });
     assert!(matches!(arc.get(0x81), Err(Error::Timeout)));
+}
+
+#[test]
+fn reader_failure_closes_session_once() {
+    struct FailingReader(std::sync::mpsc::Receiver<()>);
+    impl Read for FailingReader {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            let _ = self.0.recv();
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "unplugged",
+            ))
+        }
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let arc = Arc::from_io(FailingReader(rx), std::io::sink());
+    let events = arc.events();
+    tx.send(()).unwrap();
+    assert!(matches!(
+        events.recv_timeout(Duration::from_secs(1)),
+        Ok(Event::Disconnected)
+    ));
+    assert!(matches!(arc.get(9), Err(Error::Closed)));
+    assert!(matches!(
+        events.recv_timeout(Duration::from_millis(20)),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert_eq!(
+        serde_json::to_string(&Error::Closed).unwrap(),
+        "\"device connection closed\""
+    );
 }
