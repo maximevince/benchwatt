@@ -1,2 +1,2 @@
-<script lang="ts">import { app } from '$lib/stores.svelte';</script>
-<div class="alerts-log">{#if app.alerts.length === 0}<p class="empty-state">No alerts this session.</p>{:else}{#each app.alerts as alert (alert.key)}<div class="alert-entry" class:warning={!/overcurr|overvolt|overtemp/.test(alert.name)}><time>{alert.time}</time><span>{alert.name.replaceAll('-', ' ')}</span><code>#{alert.id}</code></div>{/each}{/if}</div>
+<script lang="ts">import { app } from '$lib/stores.svelte'; import { describeAlert } from '$lib/alerts';</script>
+<div class="alerts-log">{#if app.alerts.length === 0}<p class="empty-state">No alerts this session.</p>{:else}{#each app.alerts as alert (alert.key)}{@const details = describeAlert(alert.id)}<div class="alert-entry" class:warning={details.severity === 'warning'}><time>{alert.time}</time><span><strong>{details.title}</strong><small>{details.description}</small></span><code>#{alert.id}</code></div>{/each}{/if}</div>

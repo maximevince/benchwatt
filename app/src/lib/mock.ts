@@ -16,7 +16,7 @@ function tick() {
   if (phase % 97 === 0) spike = 1;
   const voltage = settings.main ? (settings.mainvolt ?? 0) + Math.sin(phase / 27) * 0.0015 : 0;
   const baseCurrent = settings.main ? voltage / 100 + (Math.random() - 0.5) * 0.00035 : 0;
-  let current = baseCurrent * (spike ? 10 : 1);
+  let current = baseCurrent * (spike ? 3 : 1);
   spike = 0;
   const limit = settings.maxcur ?? 3;
   if (settings.main && current > limit) {

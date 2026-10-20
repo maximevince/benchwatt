@@ -1,19 +1,23 @@
 <script lang="ts">
   import { Input } from '$lib/components/ui/input';
   import { app } from '$lib/stores.svelte';
-  let { label, value, suffix, hint, min, max, step, disabled, apply }: { label: string; value: number | null; suffix: string; hint: string; min: number; max: number; step: number; disabled: boolean; apply: (value: number) => Promise<boolean> } = $props();
-  let draft = $state('');
+  let { label, value, suffix, hint, min, max, step, precision, disabled, apply }: { label: string; value: number | null; suffix: string; hint: string; min: number; max: number; step: number; precision: number; disabled: boolean; apply: (value: number) => Promise<boolean> } = $props();
+  let draft = $state<string | number>('');
   let confirmed = $state(false);
   let editing = $state(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
-  $effect(() => { if (!editing) draft = value == null ? '' : String(value); });
+  const deviceValue = () => value == null ? '' : value.toFixed(precision);
+  $effect(() => { if (!editing) draft = deviceValue(); });
   async function commit() {
     editing = false;
-    if (disabled || value == null || draft.trim() === String(value)) return;
-    const parsed = Number(draft);
-    if (!draft.trim() || !Number.isFinite(parsed) || parsed < min || parsed > max) { app.report(`${label} must be between ${min} and ${max} ${suffix}.`); draft = String(value); return; }
-    if (await apply(parsed)) { confirmed = true; clearTimeout(timer); timer = setTimeout(() => confirmed = false, 750); }
-    else draft = String(value);
+    if (disabled || value == null) return;
+    const text = String(draft).trim();
+    const parsed = Number(text);
+    if (!text || !Number.isFinite(parsed) || parsed < min || parsed > max) { app.report(`${label} must be between ${min} and ${max} ${suffix}.`); draft = deviceValue(); return; }
+    const rounded = Number(parsed.toFixed(precision));
+    if (rounded === Number(value.toFixed(precision))) { draft = deviceValue(); return; }
+    if (await apply(rounded)) { confirmed = true; clearTimeout(timer); timer = setTimeout(() => confirmed = false, 750); }
+    else draft = deviceValue();
   }
 </script>
 <label class="setpoint">

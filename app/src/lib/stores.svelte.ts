@@ -1,5 +1,6 @@
 import { toast } from 'svelte-sonner';
 import { backend, type Alert, type Command, type Connection, type Monitor, type Settings } from './backend';
+import { describeAlert } from './alerts';
 
 export type AlertEntry = Alert & { key: number; time: string };
 export type Sample = { time: number; mc: number | null; mv: number | null; mp: number | null };
@@ -40,8 +41,10 @@ class AppState {
       backend.listen('alert', value => {
         const entry = { ...value, key: ++this.key, time: new Date().toLocaleTimeString() };
         this.alerts = [entry, ...this.alerts].slice(0, 100);
-        if (/overcurr|overvolt|overtemp/.test(value.name)) toast.error(value.name.replaceAll('-', ' '));
-        else toast.warning(value.name.replaceAll('-', ' '));
+        const details = describeAlert(value.id);
+        const message = `${details.title}: ${details.description}`;
+        if (details.severity === 'warning') toast.warning(message);
+        else toast.error(message);
       }),
     ]);
     try {

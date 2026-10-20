@@ -20,8 +20,8 @@
     <Switch checked={app.settings?.main ?? false} disabled={app.disabled} onCheckedChange={on => void app.command('set_output', { on })} aria-label="Toggle output" />
   </div>
   <div class="setpoint-list">
-    <SetpointInput label="Voltage" value={app.settings?.mainvolt ?? null} suffix="V" hint={`max ${max.toFixed(2)} V`} min={0} {max} step={0.001} disabled={app.disabled} apply={v => app.command('set_voltage', { volts: v })} />
-    <SetpointInput label="Current limit" value={app.settings?.maxcur == null ? null : app.settings.maxcur * 1000} suffix="mA" hint="1–3000 mA" min={1} max={3000} step={0.1} disabled={app.disabled} apply={v => app.command('set_current_limit', { amps: v / 1000 })} />
+    <SetpointInput label="Voltage" value={app.settings?.mainvolt ?? null} suffix="V" hint={`max ${max.toFixed(2)} V`} min={0} {max} step={0.001} precision={3} disabled={app.disabled} apply={v => app.command('set_voltage', { volts: v })} />
+    <SetpointInput label="Current limit" value={app.settings?.maxcur == null ? null : app.settings.maxcur * 1000} suffix="mA" hint="1–3000 mA" min={1} max={3000} step={1} precision={0} disabled={app.disabled} apply={v => app.command('set_current_limit', { amps: v / 1000 })} />
   </div>
   <div class="mode-row"><span>Current mode</span><Select type="single" value={app.settings?.mainsrccurrmode === 1 ? 'limit' : 'cutoff'} onValueChange={mode => { if (mode) void app.command('set_current_mode', { mode }); }} disabled={app.disabled}><SelectTrigger size="sm" aria-label="Current mode"><SelectValue placeholder="Cutoff" /></SelectTrigger><SelectContent><SelectItem value="cutoff">Cutoff</SelectItem><SelectItem value="limit">Limit</SelectItem></SelectContent></Select></div>
 </section>

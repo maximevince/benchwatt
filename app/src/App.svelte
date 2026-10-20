@@ -12,6 +12,7 @@
   import LiveChart from '$lib/components/LiveChart.svelte';
   import BottomDrawer from '$lib/components/BottomDrawer.svelte';
   import { PaneGroup, Pane, Handle } from '$lib/components/ui/resizable';
+  import { ScrollArea } from '$lib/components/ui/scroll-area';
   let cleanup: (() => void) | undefined;
   const toggleDrawer = () => app.drawerOpen = !app.drawerOpen;
   onMount(() => {
@@ -37,7 +38,7 @@
     <TopBar/>
     <PaneGroup direction="horizontal" class="workspace">
       <Pane defaultSize={25} minSize={20} maxSize={36} class="sidebar-pane">
-        <aside class="sidebar"><SupplyPanel/><ChannelList/><ExpansionPanel/><StatusPanel/></aside>
+        <ScrollArea class="sidebar-scroll"><aside class="sidebar"><SupplyPanel/><ChannelList/><ExpansionPanel/><StatusPanel/></aside></ScrollArea>
       </Pane>
       <Handle withHandle/>
       <Pane defaultSize={75} minSize={55} class="main-pane">
@@ -54,6 +55,6 @@
         {/if}
       </Pane>
     </PaneGroup>
-    <Toaster position="top-right" richColors/>
+    <Toaster position="bottom-right" offset="calc(24% + 16px)" richColors/>
   </div>
 </TooltipProvider>
