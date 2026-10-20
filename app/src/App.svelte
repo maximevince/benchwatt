@@ -4,12 +4,12 @@
   import { Toaster } from '$lib/components/ui/sonner';
   import { TooltipProvider } from '$lib/components/ui/tooltip';
   import { app } from '$lib/stores.svelte';
+  import { Button } from '$lib/components/ui/button';
   import TopBar from '$lib/components/TopBar.svelte';
   import SupplyPanel from '$lib/components/SupplyPanel.svelte';
   import ChannelList from '$lib/components/ChannelList.svelte';
   import ExpansionPanel from '$lib/components/ExpansionPanel.svelte';
   import StatusPanel from '$lib/components/StatusPanel.svelte';
-  import LiveChart from '$lib/components/LiveChart.svelte';
   import RecordingPlot from '$lib/components/RecordingPlot.svelte';
   import BottomDrawer from '$lib/components/BottomDrawer.svelte';
   import { PaneGroup, Pane, Handle } from '$lib/components/ui/resizable';
@@ -47,14 +47,14 @@
       <Pane defaultSize={75} minSize={55} class="main-pane">
         {#if app.drawerOpen}
           <PaneGroup direction="vertical" class="main-panes">
-            <Pane defaultSize={76} minSize={40}><div class="plot-container">{#if app.recording}<div class="plot-tabs"><button class:active={app.plotMode === 'live'} onclick={() => app.plotMode = 'live'}>Live</button><button class:active={app.plotMode === 'recording'} onclick={() => app.plotMode = 'recording'}>Recording</button></div>{/if}{#if app.recording && app.plotMode === 'recording'}<RecordingPlot/>{:else}<LiveChart/>{/if}</div></Pane>
+            <Pane defaultSize={76} minSize={40}><div class="plot-container">{#if app.recording}<RecordingPlot/>{:else}<div class="plot-empty"><p>No recording yet</p><Button onclick={() => app.toggleRecording()} disabled={!app.connection.connected}>Record <kbd>R</kbd></Button><small>Live values are in the sidebar; choose channels under Channels.</small></div>{/if}</div></Pane>
             <Handle withHandle/>
             <Pane defaultSize={24} minSize={14} maxSize={45} collapsible collapsedSize={6} onCollapse={() => app.drawerOpen = false}>
               <BottomDrawer onToggle={toggleDrawer}/>
             </Pane>
           </PaneGroup>
         {:else}
-          <div class="main-panes-collapsed"><div class="plot-container">{#if app.recording}<div class="plot-tabs"><button class:active={app.plotMode === 'live'} onclick={() => app.plotMode = 'live'}>Live</button><button class:active={app.plotMode === 'recording'} onclick={() => app.plotMode = 'recording'}>Recording</button></div>{/if}{#if app.recording && app.plotMode === 'recording'}<RecordingPlot/>{:else}<LiveChart/>{/if}</div><BottomDrawer onToggle={toggleDrawer}/></div>
+          <div class="main-panes-collapsed"><div class="plot-container">{#if app.recording}<RecordingPlot/>{:else}<div class="plot-empty"><p>No recording yet</p><Button onclick={() => app.toggleRecording()} disabled={!app.connection.connected}>Record <kbd>R</kbd></Button><small>Live values are in the sidebar; choose channels under Channels.</small></div>{/if}</div><BottomDrawer onToggle={toggleDrawer}/></div>
         {/if}
       </Pane>
     </PaneGroup>

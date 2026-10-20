@@ -11,7 +11,7 @@ traces.
   Separator, ScrollArea, Badge, Resizable panes.
 - Fonts (bundled locally via `@fontsource`, no network at runtime): **Geist** for UI,
   **Geist Mono** for all numbers/units/hex (tabular-nums).
-- Plot (Phase 3): **uPlot** on canvas, themed with the tokens below.
+- Plot: one capture view (custom canvas, min/max pyramid), like Otii and Logic 2 — no separate live chart; live values live in the sidebar readouts.
 
 ## Color
 Neutral base, shadcn "zinc". Dark is the default; light theme fully supported (toggle in the

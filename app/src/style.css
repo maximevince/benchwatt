@@ -516,20 +516,7 @@ button:disabled {
 .main-panes {
   height: 100%;
 }
-.chart-panel {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  background: var(--background);
-}
-.chart-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 15px;
-  padding: 21px 24px 12px;
-}
+
 .eyebrow {
   font:
     600 10px "Geist Mono",
@@ -537,22 +524,7 @@ button:disabled {
   letter-spacing: 0.1em;
   color: var(--muted-foreground);
 }
-.chart-header h1 {
-  font-size: 19px;
-  line-height: 1.2;
-  font-weight: 600;
-  letter-spacing: -0.035em;
-  margin: 5px 0 0;
-}
-.chart-actions {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.chart-actions button {
-  height: 30px;
-  font-size: 11px;
-}
+
 .live-badge {
   height: 25px;
   display: flex;
@@ -562,46 +534,7 @@ button:disabled {
     monospace;
   color: var(--muted-foreground);
 }
-.chart-legend {
-  display: flex;
-  gap: 25px;
-  padding: 10px 24px 14px;
-  border-bottom: 1px solid var(--border);
-}
-.chart-legend > div {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 11px;
-  color: var(--muted-foreground);
-}
-.chart-legend strong {
-  font:
-    500 12px "Geist Mono",
-    monospace;
-  color: var(--channel-color);
-}
-.chart-legend small {
-  font-size: 10px;
-  color: var(--muted-foreground);
-}
-.chart-stage {
-  position: relative;
-  flex: 1;
-  min-height: 130px;
-  padding: 12px 14px 0;
-}
-.chart-canvas {
-  height: 100%;
-  width: 100%;
-  overflow: hidden;
-}
-.uplot {
-  font-family: "Geist Mono", monospace !important;
-}
-.u-legend {
-  display: none !important;
-}
+
 .waiting-overlay {
   position: absolute;
   inset: 0;
@@ -631,16 +564,7 @@ button:disabled {
   font-size: 11px;
   color: var(--muted-foreground);
 }
-.chart-footer {
-  display: flex;
-  justify-content: space-between;
-  border-top: 1px solid var(--border);
-  padding: 8px 24px;
-  font:
-    10px "Geist Mono",
-    monospace;
-  color: var(--muted-foreground);
-}
+
 .drawer {
   height: 100%;
   background: var(--panel);
@@ -737,9 +661,7 @@ button:disabled {
   .readout-value > span {
     font-size: 25px;
   }
-  .chart-header {
-    padding-top: 14px;
-  }
+
 }
 
 .supply-separator {
@@ -791,12 +713,6 @@ button:disabled {
 .channel-row {
   min-height: 24px;
 }
-.chart-stage {
-  padding-bottom: 12px;
-}
-.chart-canvas {
-  overflow: visible;
-}
 
 .live-badge.offline i {
   background: #71717a;
@@ -809,7 +725,6 @@ button:disabled {
   display: flex;
   flex-direction: column;
 }
-.main-panes-collapsed > .chart-panel,
 .main-panes-collapsed > .plot-container {
   flex: 1;
   min-height: 0;
@@ -828,10 +743,9 @@ button:disabled {
 .channel-row input { width:13px;height:13px;accent-color:var(--foreground);margin-right:3px; }
 .channel-row input:disabled { opacity:.5; }
 .plot-container { position:relative;width:100%;height:100%;min-height:0;display:flex;flex-direction:column; }
-.plot-container > .chart-panel { flex:1;min-height:0; }
-.plot-tabs { position:absolute;top:13px;left:50%;z-index:5;display:flex;gap:2px;padding:2px;border:1px solid var(--border);border-radius:6px;background:var(--panel);transform:translateX(-50%); }
-.plot-tabs button,.recording-toolbar button {border:0;border-radius:4px;background:transparent;color:var(--muted-foreground);font-size:11px;padding:5px 9px;}
-.plot-tabs button.active,.recording-toolbar button.active {background:var(--muted);color:var(--foreground);}
+
+.recording-toolbar button {border:0;border-radius:4px;background:transparent;color:var(--muted-foreground);font-size:11px;padding:5px 9px;}
+.recording-toolbar button.active {background:var(--muted);color:var(--foreground);}
 .recording-panel {height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden;background:var(--background);}
 .recording-toolbar {height:48px;flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--border);}
 .recording-toolbar strong {font-size:14px;}.recording-toolbar span {font:11px "Geist Mono";color:var(--muted-foreground);margin-right:auto;}
@@ -867,3 +781,8 @@ button:disabled {
 .stats-channel {display:flex;align-items:center;gap:6px;font:11px "Geist Mono";}
 .stats-summary {display:flex;gap:24px;padding-top:8px;border-top:1px solid var(--border);}
 .stats-summary div {display:flex;flex-direction:column;gap:3px;}
+
+.plot-empty {height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--muted-foreground);}
+.plot-empty p {margin:0;font-size:14px;color:var(--foreground);}
+.plot-empty small {font-size:11px;}
+.plot-empty kbd {margin-left:6px;padding:0 5px;border:1px solid currentColor;border-radius:3px;font:10px "Geist Mono",monospace;opacity:.6;}

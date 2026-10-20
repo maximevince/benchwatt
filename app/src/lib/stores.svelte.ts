@@ -3,23 +3,19 @@ import { backend, type Alert, type Command, type Connection, type Monitor, type 
 import { describeAlert } from './alerts';
 
 export type AlertEntry = Alert & { key: number; time: string };
-export type Sample = { time: number; mc: number | null; mv: number | null; mp: number | null };
 const emptyMonitor = (): Monitor => ({ mv: null, mc: null, mp: null, vb: null, vj: null, tp: null, gpi: null, fourwire: null });
 class AppState {
   connection = $state<Connection>({ connected: false });
   settings = $state<Settings | null>(null);
   monitor = $state<Monitor>(emptyMonitor());
   alerts = $state<AlertEntry[]>([]);
-  samples = $state<Sample[]>([]);
   busy = $state(false);
   error = $state('');
   theme = $state<'dark' | 'light'>('dark');
   showPower = $state(false);
-  paused = $state(false);
   drawerOpen = $state(true);
   recording = $state<RecordingInfo | null>(null);
   recordChannels = $state<string[]>(['mc', 'mv', 'mp']);
-  plotMode = $state<'live' | 'recording'>('live');
   range = $state<[number, number] | null>(null);
   viewRange = $state<[number, number]>([0, 10]);
   stats = $state<AllStats | null>(null);
@@ -38,15 +34,9 @@ class AppState {
   async start(): Promise<() => void> {
     this.initTheme();
     const off = await Promise.all([
-      backend.listen('connection', value => { this.connection = value; if (!value.connected) { this.settings = null; this.monitor = emptyMonitor(); this.samples = []; this.uartOpen = false; } }),
+      backend.listen('connection', value => { this.connection = value; if (!value.connected) { this.settings = null; this.monitor = emptyMonitor(); this.uartOpen = false; } }),
       backend.listen('settings', value => { this.settings = value; }),
-      backend.listen('monitor', value => {
-        this.monitor = value;
-        if (!this.paused) {
-          const time = Date.now() / 1000;
-          this.samples = [...this.samples.filter(s => s.time >= time - 60), { time, mc: value.mc, mv: value.mv, mp: value.mp }];
-        }
-      }),
+      backend.listen('monitor', value => { this.monitor = value; }),
       backend.listen('alert', value => {
         const entry = { ...value, key: ++this.key, time: new Date().toLocaleTimeString() };
         this.alerts = [entry, ...this.alerts].slice(0, 100);
@@ -73,13 +63,11 @@ class AppState {
     finally { this.busy = false; }
   }
   report(cause: unknown) { this.error = String(cause); toast.error(this.error); }
-  clearChart() { this.samples = []; }
   async toggleRecording() {
     try {
       if (this.recording?.active) { this.recording = await backend.stopRecording(); return; }
       if (this.recording && !window.confirm('Replace the current recording? It cannot be recovered until export is available.')) return;
       this.recording = await backend.startRecording(this.recordChannels);
-      this.plotMode = 'recording';
       this.range = null;
       this.viewRange = [0, 10];
       this.stats = null;

@@ -16,7 +16,7 @@
     catch (cause) { app.report(cause); }
   }
   async function send() { try { await backend.uartSend(outgoing); outgoing = ''; await app.refreshDetails(); } catch (cause) { app.report(cause); } }
-  function center(t: number) { const span = app.viewRange[1]-app.viewRange[0]; app.viewRange = [Math.max(0,t-span/2),Math.max(span,t+span/2)]; app.plotMode = 'recording'; }
+  function center(t: number) { const span = app.viewRange[1]-app.viewRange[0]; app.viewRange = [Math.max(0,t-span/2),Math.max(span,t+span/2)]; }
   function metric(value: number, kind: 'current' | 'voltage' | 'power') { const v = formatReading(value, kind); return v.number.trim() + ' ' + v.unit; }
   function statMetric(value: number, ch: string) { return ch === 'tp' ? value.toFixed(2) + ' °C' : metric(value, ch === 'mc' || ch === 'ac' ? 'current' : ch === 'mp' || ch === 'ap' ? 'power' : 'voltage'); }
 </script>
