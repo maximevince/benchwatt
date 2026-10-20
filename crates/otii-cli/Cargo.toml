@@ -12,3 +12,5 @@ clap = { version = "4.5", features = ["derive"] }
 otii-arc = { path = "../otii-arc" }
 
 ctrlc = "3"
+otii-rec = { path = "../otii-rec" }
+serde_json = "1"

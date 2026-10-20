@@ -12,7 +12,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let specs: Vec<ChannelSpec> = channels
         .iter()
         .map(|&id| {
-            let unit = prop::CHANNELS.iter().find(|c| c.0 == id).map_or("", |c| c.2);
+            let unit = prop::CHANNELS
+                .iter()
+                .find(|c| c.0 == id)
+                .map_or("", |c| c.2);
             let kind = match id {
                 0x16 => Kind::Digital,
                 0x17 => Kind::Bytes,
@@ -66,25 +69,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     arc.set_current_limit(3.0)?;
 
     let d = rec.duration();
-    println!("duration {d:.3} s, gaps {:?}, samples {:?}", rec.gaps(), rec.sample_counts());
+    println!(
+        "duration {d:.3} s, gaps {:?}, samples {:?}",
+        rec.gaps(),
+        rec.sample_counts()
+    );
     for ch in [0x00u16, 0x01, 0x06] {
         if let Some(s) = rec.stats(ch, 0.0, d) {
             println!(
                 "{:>3}: mean {:.6} min {:.6} max {:.6} rms {:.6} n {}",
-                prop::channel_name(ch), s.mean, s.min, s.max, s.rms, s.count
+                prop::channel_name(ch),
+                s.mean,
+                s.min,
+                s.max,
+                s.rms,
+                s.count
             );
         }
     }
-    println!("charge {:?} mAh, energy {:?}", rec.charge_mah(0.0, d), rec.energy(0.0, d));
+    println!(
+        "charge {:?} mAh, energy {:?}",
+        rec.charge_mah(0.0, d),
+        rec.energy(0.0, d)
+    );
     for px in [800, 20_000] {
         match rec.view(0x00, 0.0, d, px) {
             Some(View::Raw { t, .. }) => println!("view px={px}: raw {} points", t.len()),
-            Some(View::Envelope { t, .. }) => println!("view px={px}: envelope {} buckets", t.len()),
+            Some(View::Envelope { t, .. }) => {
+                println!("view px={px}: envelope {} buckets", t.len())
+            }
             None => println!("view px={px}: none"),
         }
     }
     let edges = rec.edges(0.0, d);
-    println!("gpi edges {}: {:?}", edges.len(), edges.iter().map(|e| (format!("{:.3}", e.t), e.mask)).collect::<Vec<_>>());
+    println!(
+        "gpi edges {}: {:?}",
+        edges.len(),
+        edges
+            .iter()
+            .map(|e| (format!("{:.3}", e.t), e.mask))
+            .collect::<Vec<_>>()
+    );
     let text: Vec<u8> = rec.uart(0.0, d).into_iter().flat_map(|c| c.bytes).collect();
     println!("uart rx: {:?}", String::from_utf8_lossy(&text));
     Ok(())

@@ -1,15 +1,17 @@
 //! Recording engine. A 4 kHz f32 stream uses about 58 MB/h of raw storage.
 use otii_arc::msg::{Block, BlockBody};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 const CHUNK: usize = 4096;
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub mod export;
+pub mod file;
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Kind {
     Analog,
     Digital,
     Bytes,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChannelSpec {
     pub id: u16,
     pub name: String,
@@ -17,17 +19,17 @@ pub struct ChannelSpec {
     pub rate_hz: u32,
     pub kind: Kind,
 }
-#[derive(Clone, Copy, Debug, Serialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Gap {
     pub from: f64,
     pub to: f64,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Edge {
     pub t: f64,
     pub mask: u32,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UartChunk {
     pub t: f64,
     pub bytes: Vec<u8>,
@@ -197,6 +199,7 @@ struct Channel {
     spec: ChannelSpec,
     a: Analog,
     edges: Vec<Edge>,
+    digital_count: usize,
     uart: Vec<UartChunk>,
     last: Option<u32>,
 }
@@ -219,6 +222,7 @@ impl Recording {
                             spec: s.clone(),
                             a: Analog::default(),
                             edges: Vec::new(),
+                            digital_count: 0,
                             uart: Vec::new(),
                             last: None,
                         },
@@ -247,6 +251,7 @@ impl Recording {
             spec: s,
             a: Analog::default(),
             edges: Vec::new(),
+            digital_count: 0,
             uart: Vec::new(),
             last: None,
         });
@@ -276,6 +281,7 @@ impl Recording {
         match (&c.spec.kind, &b.body) {
             (Kind::Analog, BlockBody::Samples(v)) if !v.is_empty() => c.a.push(t, v),
             (Kind::Digital, BlockBody::Digital(v)) => {
+                c.digital_count += v.len();
                 for (i, &mask) in v.iter().enumerate() {
                     if c.last != Some(mask) {
                         c.edges.push(Edge {
@@ -306,7 +312,7 @@ impl Recording {
                     c.spec.name.clone(),
                     match c.spec.kind {
                         Kind::Analog => c.a.len,
-                        Kind::Digital => c.edges.len(),
+                        Kind::Digital => c.digital_count,
                         Kind::Bytes => c.uart.iter().map(|x| x.bytes.len()).sum(),
                     },
                 )
@@ -484,5 +490,15 @@ impl Recording {
             let e = c.uart.partition_point(|x| x.t <= t1);
             c.uart[s..e].to_vec()
         })
+    }
+}
+
+impl Recording {
+    /// Value held at a time, limited to the packet containing that time.
+    pub fn analog_at(&self, ch: u16, t: f64) -> Option<f32> {
+        let channel = self.channels.get(&ch)?;
+        (channel.spec.kind == Kind::Analog)
+            .then(|| channel.a.at(t))
+            .flatten()
     }
 }
