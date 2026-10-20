@@ -1,0 +1,11 @@
+[package]
+name = "otii-arc"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serialport = "4.6"
+
+[dev-dependencies]
+pretty_assertions = "1"
+

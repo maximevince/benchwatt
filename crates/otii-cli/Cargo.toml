@@ -1,0 +1,14 @@
+[package]
+name = "otii-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "otii"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+otii-arc = { path = "../otii-arc" }
+
+ctrlc = "3"
