@@ -1,9 +1,22 @@
 import { toast } from 'svelte-sonner';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { documentDir, join } from '@tauri-apps/api/path';
 import { backend, type Alert, type Command, type Connection, type Monitor, type Settings, type RecordingInfo, type AllStats, type UartChunk, type Edge } from './backend';
 import { describeAlert } from './alerts';
 import { channel } from './channels';
+
+// File dialogs open in the folder used last (per machine), else ~/Documents.
+const LAST_DIR_KEY = 'openotii.lastDir';
+async function inLastDir(name: string): Promise<string> {
+  let dir: string | null = null;
+  try { dir = localStorage.getItem(LAST_DIR_KEY); } catch { /* storage unavailable */ }
+  try { return await join(dir ?? await documentDir(), name); } catch { return name; }
+}
+function rememberDir(path: string) {
+  const end = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  if (end > 0) try { localStorage.setItem(LAST_DIR_KEY, path.slice(0, end)); } catch { /* storage unavailable */ }
+}
 
 export type AlertEntry = Alert & { key: number; time: string };
 const emptyMonitor = (): Monitor => ({ mv: null, mc: null, mp: null, vb: null, vj: null, tp: null, gpi: null, fourwire: null });
@@ -112,20 +125,20 @@ class AppState {
   private mock() { return !('__TAURI_INTERNALS__' in window); }
   async saveRecording() {
     if (!this.recording) return;
-    try { const path = this.mock() ? 'mock.otii-rec' : await save({ defaultPath: this.fileName || 'recording.otii-rec', filters: [{ name: 'OpenOtii recording', extensions: ['otii-rec'] }] });
-      if (!path) return; await backend.saveRecording(path); this.fileName = path.split(/[\\/]/).pop() ?? path; this.unsaved = false; toast.success(this.mock() ? 'Mock recording saved' : 'Recording saved');
+    try { const path = this.mock() ? 'mock.otii-rec' : await save({ defaultPath: await inLastDir(this.fileName || 'recording.otii-rec'), filters: [{ name: 'OpenOtii recording', extensions: ['otii-rec'] }] });
+      if (!path) return; rememberDir(path); await backend.saveRecording(path); this.fileName = path.split(/[\\/]/).pop() ?? path; this.unsaved = false; toast.success(this.mock() ? 'Mock recording saved' : 'Recording saved');
     } catch (cause) { this.report(cause); }
   }
   async openRecording() {
     if (!await this.confirmDiscard()) return;
-    try { const path = this.mock() ? 'mock.otii-rec' : await open({ multiple: false, filters: [{ name: 'OpenOtii recording', extensions: ['otii-rec'] }] });
-      if (typeof path !== 'string') return; this.recording = await backend.loadRecording(path); this.fileName = path.split(/[\\/]/).pop() ?? path; this.unsaved = false; this.hiddenLanes = []; this.range = null; this.uart = []; this.edges = []; this.viewRange = [0, Math.max(this.recording.duration_s, .001)]; await this.refreshDetails();
+    try { const path = this.mock() ? 'mock.otii-rec' : await open({ multiple: false, defaultPath: await inLastDir(''), filters: [{ name: 'OpenOtii recording', extensions: ['otii-rec'] }] });
+      if (typeof path !== 'string') return; rememberDir(path); this.recording = await backend.loadRecording(path); this.fileName = path.split(/[\\/]/).pop() ?? path; this.unsaved = false; this.hiddenLanes = []; this.range = null; this.uart = []; this.edges = []; this.viewRange = [0, Math.max(this.recording.duration_s, .001)]; await this.refreshDetails();
     } catch (cause) { this.report(cause); }
   }
   async exportRecording(extension: 'csv' | 'sr', selected = false) {
     if (!this.recording) return;
-    try { const path = this.mock() ? `mock.${extension}` : await save({ defaultPath: `export.${extension}`, filters: [{ name: extension === 'csv' ? 'CSV' : 'sigrok session', extensions: [extension] }] });
-      if (!path) return; await backend.exportRecording(path, ...(selected && this.range ? this.range : [])); toast.success(this.mock() ? 'Mock export complete' : 'Export complete');
+    try { const path = this.mock() ? `mock.${extension}` : await save({ defaultPath: await inLastDir(`export.${extension}`), filters: [{ name: extension === 'csv' ? 'CSV' : 'sigrok session', extensions: [extension] }] });
+      if (!path) return; rememberDir(path); await backend.exportRecording(path, ...(selected && this.range ? this.range : [])); toast.success(this.mock() ? 'Mock export complete' : 'Export complete');
     } catch (cause) { this.report(cause); }
   }
   async requestExport(extension: 'csv' | 'sr') {
