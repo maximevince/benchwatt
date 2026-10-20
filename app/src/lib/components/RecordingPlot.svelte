@@ -1,164 +1,173 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { backend, type View } from '$lib/backend';
+  import { backend, type View, type UartChunk } from '$lib/backend';
   import { app } from '$lib/stores.svelte';
-  let host: HTMLDivElement;
-  let canvas: HTMLCanvasElement;
-  let width = $state(700), height = $state(400);
+  import { formatReading } from '$lib/format';
+  import { activeGpi, zoomAt, panFrom, type Range } from '$lib/view-math';
+  let host: HTMLDivElement, canvas: HTMLCanvasElement;
+  let width = $state(700), availableHeight = $state(400), version = $state(0);
   let follow = $state(true), selecting = $state(false), cursor = $state<number | null>(null);
-  let locked = $state<string[]>([]);
-  let scales: Record<string, [number, number]> = {};
-  const views = new Map<string, View>();
-  let previousDuration = 0;
-  const inflight = new Set<string>();
-  let queued = false, drag: { x: number; range: [number, number]; shift: boolean } | null = null;
+  let expandedIdle = $state(false), hoveredUart = $state<UartChunk | null>(null);
+  let locked = $state<string[]>([]), logarithmic = $state<string[]>([]);
+  let scales: Record<string, Range> = {}, visibleMeans: Record<string, number> = {}, sampleSpacing = Infinity, previousDuration = 0, wasActive = false, queued = false;
+  const views = new Map<string, View>(), inflight = new Set<string>();
+  let drag: { x: number; range: Range; mode: 'pan' | 'select' | 'start' | 'end'; anchor: number } | null = null;
   const colors: Record<string, string> = { mc: 'var(--current)', mv: 'var(--voltage)', mp: 'var(--power)', ac: 'var(--teal)', av: 'var(--cyan)', vb: 'var(--aux)', tp: 'var(--aux)' };
-  let lanes = $derived((app.recording?.channels ?? []).flatMap(ch => ch === 'gpi' ? ['gpi1','gpi2','gpi3','gpi4','gpi5','gpi6'] : [ch]));
-  let laneHeight = $derived(Math.max(48, (height - 32) / Math.max(lanes.length, 1)));
+  const analog = $derived((app.recording?.channels ?? []).filter(ch => ch in colors));
+  const active = $derived(activeGpi(app.edges));
+  const idle = $derived([1,2,3,4,5,6].filter(n => !active.includes(n)));
+  const lanes = $derived([...analog, ...(app.recording?.channels.includes('gpi') ? [...active.map(n => 'gpi'+n), ...(idle.length ? expandedIdle ? idle.map(n => 'gpi'+n) : ['idle'] : [])] : []), ...(app.recording?.channels.includes('rx') ? ['rx'] : [])]);
+  const analogHeight = $derived(Math.max(110, (availableHeight - 32 - lanes.filter(ch => ch.startsWith('gpi') || ch === 'idle').length * 24 - (lanes.includes('rx') ? 40 : 0)) / Math.max(analog.length, 1)));
+  const laneHeight = (ch: string) => ch === 'rx' ? 40 : ch.startsWith('gpi') || ch === 'idle' ? 24 : analogHeight;
+  const height = $derived(32 + lanes.reduce((sum, ch) => sum + laneHeight(ch), 0));
+  const topOf = (ch: string) => 32 + lanes.slice(0, lanes.indexOf(ch)).reduce((sum, lane) => sum + laneHeight(lane), 0);
   const x = (t: number) => (t - app.viewRange[0]) / (app.viewRange[1] - app.viewRange[0]) * width;
   const time = (px: number) => app.viewRange[0] + px / width * (app.viewRange[1] - app.viewRange[0]);
+  const minimumSpan = () => Math.max(1e-6, 20 * Math.min(sampleSpacing, (app.recording?.duration_s ?? 1) / Math.max(1, ...analog.map(ch => app.recording?.samples[ch] ?? 0))));
+  const duration = () => Math.max(app.recording?.duration_s ?? 0, minimumSpan());
+  const kind = (ch: string): 'current' | 'voltage' | 'power' => ch === 'mc' || ch === 'ac' ? 'current' : ch === 'mp' ? 'power' : 'voltage';
+  const unit = (ch: string) => ch === 'tp' ? '°C' : kind(ch) === 'current' ? 'A' : kind(ch) === 'power' ? 'W' : 'V';
+  function reading(value: number, ch: string) { if (ch === 'tp') return Number.isFinite(value) ? value.toFixed(2)+' °C' : '—'; const r = formatReading(value, kind(ch)); return r.number.trim()+' '+r.unit; }
   function currentValue(ch: string) {
-    const view = views.get(ch);
-    const at = cursor;
-    if (!view || at == null || !view.t.length) return '';
-    const n = view.t.findIndex(t => t >= at);
-    const i = n < 0 ? view.t.length - 1 : n;
-    if (view.kind === 'raw') return Number.isFinite(view.v[i]) ? view.v[i].toPrecision(4) : '—';
-    return Number.isFinite(view.min[i]) ? view.min[i].toPrecision(3) + '–' + view.max[i].toPrecision(3) : '—';
+    version; const view = views.get(ch);
+    if (!view || cursor == null || !view.t.length) return '—';
+    let i = view.t.findIndex(t => t >= cursor!); if (i < 0) i = view.t.length-1;
+    return view.kind === 'raw' ? reading(view.v[i], ch) : reading(view.min[i], ch)+'…'+reading(view.max[i], ch);
   }
-  function formatTime(t: number, span: number) {
-    if (span < 0.01) return (t * 1e6).toFixed(0) + ' µs';
-    if (span < 1) return (t * 1e3).toFixed(1) + ' ms';
-    if (span < 120) return t.toFixed(2) + ' s';
-    return (t / 60).toFixed(2) + ' min';
+  function meanValue(ch: string) {
+    version;
+    return ch in visibleMeans ? reading(visibleMeans[ch],ch) : '—';
   }
-  function schedule() {
-    if (queued) return;
-    queued = true;
-    requestAnimationFrame(() => { queued = false; void fetchViews(); draw(); });
-  }
+  function formatTime(t: number, span: number) { return span < .01 ? (t*1e6).toFixed(0)+' µs' : span < 1 ? (t*1e3).toFixed(1)+' ms' : span < 120 ? t.toFixed(2)+' s' : (t/60).toFixed(2)+' min'; }
+  function printable(bytes: number[]) { return bytes.map(byte => byte === 10 ? '↵' : byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : '·').join(''); }
+  function hex(bytes: number[]) { return bytes.map(byte => byte.toString(16).padStart(2,'0').toUpperCase()).join(' '); }
+  function schedule() { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; void fetchViews(); draw(); }); }
   async function fetchViews() {
-    const [t0, t1] = app.viewRange;
-    for (const ch of lanes) {
-      if (!(ch in colors) || inflight.has(ch)) continue;
-      inflight.add(ch);
-      void backend.getView(ch, t0, t1, Math.max(1, Math.floor(width * devicePixelRatio / 2))).then(view => {
-        views.set(ch, view); draw();
-      }).catch(cause => app.report(cause)).finally(() => {
-        inflight.delete(ch);
-        if (app.viewRange[0] !== t0 || app.viewRange[1] !== t1) schedule();
-      });
+    const [t0,t1] = app.viewRange;
+    for (const ch of analog) {
+      if (inflight.has(ch)) continue; inflight.add(ch);
+      void backend.getView(ch,t0,t1,Math.max(1,Math.floor(width*devicePixelRatio/2))).then(view => {
+        if (app.viewRange[0] === t0 && app.viewRange[1] === t1) {
+          if (view.kind === 'raw') for (let i=1;i<view.t.length;i++) if (Number.isFinite(view.v[i]) && Number.isFinite(view.v[i-1]) && view.t[i]>view.t[i-1]) sampleSpacing=Math.min(sampleSpacing,view.t[i]-view.t[i-1]);
+          views.set(ch,view); version++; draw();
+        }
+      }).catch(cause => app.report(cause)).finally(() => { inflight.delete(ch); if (app.viewRange[0] !== t0 || app.viewRange[1] !== t1) schedule(); });
     }
+    void backend.getStats(t0,t1).then(stats => {
+      if (app.viewRange[0] === t0 && app.viewRange[1] === t1) {
+        visibleMeans=Object.fromEntries(Object.entries(stats.channels).map(([ch,stat]) => [ch,stat.mean]));
+        version++;
+      }
+    }).catch(cause => app.report(cause));
     void app.refreshDetails();
   }
   function draw() {
     if (!canvas || width < 1 || height < 1) return;
-    const ratio = devicePixelRatio || 1;
-    canvas.width = Math.ceil(width * ratio); canvas.height = Math.ceil(height * ratio);
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
-    ctx.scale(ratio, ratio);
-    const css = getComputedStyle(canvas);
-    ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = css.getPropertyValue('--muted-foreground'); ctx.font = '10px Geist Mono';
-    const span = app.viewRange[1] - app.viewRange[0];
-    for (let i = 0; i <= 5; i++) {
-      const at = width * i / 5;
-      ctx.fillText(formatTime(time(at), span), Math.min(at + 4, width - 65), 16);
-      ctx.strokeStyle = css.getPropertyValue('--border'); ctx.beginPath(); ctx.moveTo(at, 24); ctx.lineTo(at, height); ctx.stroke();
-    }
-    lanes.forEach((ch, index) => {
-      const top = 32 + index * laneHeight, bottom = top + laneHeight;
-      ctx.strokeStyle = css.getPropertyValue('--border'); ctx.beginPath(); ctx.moveTo(0, bottom); ctx.lineTo(width, bottom); ctx.stroke();
+    const ratio = devicePixelRatio || 1; canvas.width = Math.ceil(width*ratio); canvas.height = Math.ceil(height*ratio);
+    const ctx = canvas.getContext('2d'); if (!ctx) return; ctx.scale(ratio,ratio);
+    const css = getComputedStyle(canvas), color = (token: string) => css.getPropertyValue(token).trim();
+    ctx.clearRect(0,0,width,height); ctx.font = '10px "Geist Mono"';
+    const span = app.viewRange[1]-app.viewRange[0];
+    for (let i=0;i<=5;i++) { const at=width*i/5; ctx.fillStyle=color('--muted-foreground'); ctx.fillText(formatTime(time(at),span),Math.min(at+4,width-70),16); ctx.strokeStyle=color('--border'); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(at,24); ctx.lineTo(at,height); ctx.stroke(); }
+    for (const ch of lanes) {
+      const top=topOf(ch), bottom=top+laneHeight(ch);
+      ctx.strokeStyle=color('--border'); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(0,bottom-.5); ctx.lineTo(width,bottom-.5); ctx.stroke();
+      if (ch === 'idle') continue;
       if (ch.startsWith('gpi')) {
-        const bit = Number(ch.slice(3)) - 1;
-        {
-          const y0 = top, baseline = y0 + laneHeight / 4;
-          ctx.strokeStyle = css.getPropertyValue('--digital'); ctx.beginPath();
-          let mask = 0, lastX = 0;
-          for (const edge of app.edges) {
-            const xx = x(edge.t), yy = y0 + ((mask >> bit) & 1 ? 4 : laneHeight - 6);
-            ctx.moveTo(lastX, yy); ctx.lineTo(xx, yy); ctx.lineTo(xx, y0 + ((edge.mask >> bit) & 1 ? 4 : laneHeight - 6));
-            lastX = xx; mask = edge.mask;
-          }
-          ctx.lineTo(width, y0 + ((mask >> bit) & 1 ? 4 : laneHeight - 6)); ctx.stroke();
-          ctx.fillStyle = css.getPropertyValue('--muted-foreground'); ctx.fillText(String(bit + 1), 4, baseline);
+        const bit=Number(ch.slice(3))-1, low=bottom-5, high=top+4;
+        let mask=app.edges[0]?.mask ?? 0, last=0;
+        for (const edge of app.edges) {
+          if (edge.t < app.viewRange[0]) { mask=edge.mask; continue; }
+          if (edge.t > app.viewRange[1]) break;
+          const xx=x(edge.t), oldY=mask & (1<<bit) ? high : low;
+          ctx.strokeStyle=color('--digital'); ctx.beginPath(); ctx.moveTo(last,oldY); ctx.lineTo(xx,oldY); ctx.lineTo(xx,edge.mask & (1<<bit) ? high : low); ctx.stroke();
+          last=xx; mask=edge.mask;
         }
-        return;
+        ctx.strokeStyle=color('--digital'); ctx.beginPath(); ctx.moveTo(last,mask & (1<<bit) ? high : low); ctx.lineTo(width,mask & (1<<bit) ? high : low); ctx.stroke(); continue;
       }
       if (ch === 'rx') {
         for (const chunk of app.uart) {
           if (chunk.t < app.viewRange[0] || chunk.t > app.viewRange[1]) continue;
-          const xx = x(chunk.t);
-          ctx.strokeStyle = css.getPropertyValue('--uart'); ctx.beginPath(); ctx.moveTo(xx, top + 4); ctx.lineTo(xx, bottom - 4); ctx.stroke();
-          if (span < 2) {
-            ctx.fillStyle = css.getPropertyValue('--uart');
-            ctx.fillText(new TextDecoder().decode(new Uint8Array(chunk.bytes)).replaceAll('\n', '↵'), xx + 3, top + 20);
-          }
-        }
-        return;
+          const xx=x(chunk.t), label=printable(chunk.bytes), next=app.uart.find(item => item.t > chunk.t);
+          const space=next ? x(next.t)-xx : width-xx, textWidth=ctx.measureText(label).width;
+          if (label && space >= Math.max(textWidth+12,chunk.bytes.length*6)) {
+            ctx.fillStyle=color('--uart'); ctx.globalAlpha=.18; ctx.fillRect(xx,top+8,textWidth+12,22); ctx.globalAlpha=1;
+            ctx.fillStyle=color('--uart'); ctx.fillText(label,xx+6,top+23);
+          } else { ctx.strokeStyle=color('--uart'); ctx.beginPath(); ctx.moveTo(xx,top+5); ctx.lineTo(xx,bottom-5); ctx.stroke(); }
+        } continue;
       }
-      const view = views.get(ch); if (!view || !view.t.length) return;
-      const values = (view.kind === 'raw' ? view.v : [...view.min, ...view.max]).filter(Number.isFinite);
-      if (!values.length) return;
-      let min = Math.min(...values), max = Math.max(...values);
-      if (locked.includes(ch) && scales[ch]) [min, max] = scales[ch];
-      else { const pad = Math.max((max - min) * 0.08, 1e-9); min -= pad; max += pad; scales[ch] = [min, max]; }
-      const y = (v: number) => bottom - 5 - (v - min) / (max - min) * (laneHeight - 10);
-      const traceColor = css.getPropertyValue(colors[ch].slice(4, -1));
-      ctx.strokeStyle = traceColor; ctx.fillStyle = traceColor;
+      const view=views.get(ch); if (!view || !view.t.length) continue;
+      const values=(view.kind === 'raw' ? view.v : [...view.min,...view.max]).filter(Number.isFinite); if (!values.length) continue;
+      const log=logarithmic.includes(ch), transform=(v: number) => log ? Math.log10(Math.max(1e-9,v)) : v;
+      const transformed=values.map(transform); let min=Math.min(...transformed), max=Math.max(...transformed);
+      if (locked.includes(ch) && scales[ch]) [min,max]=scales[ch];
+      else { const pad=Math.max((max-min)*.1,log ? .05 : Math.max(Math.abs(min),Math.abs(max))*.01,1e-9); min-=pad; max+=pad; scales[ch]=[min,max]; }
+      const y=(v: number) => bottom-8-(transform(v)-min)/(max-min)*(laneHeight(ch)-16);
+      for (let i=0;i<4;i++) { const tick=min+(max-min)*i/3, yy=bottom-8-i/3*(laneHeight(ch)-16); ctx.strokeStyle=color('--border'); ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(width,yy); ctx.stroke(); ctx.fillStyle=color('--muted-foreground'); ctx.fillText(reading(log ? 10**tick : tick,ch),4,yy-3); }
+      const trace=color(colors[ch].slice(4,-1)); ctx.strokeStyle=trace; ctx.fillStyle=trace;
       if (view.kind === 'raw') {
-        let step = Infinity;
-        for (let i = 1; i < view.t.length; i++) step = Math.min(step, view.t[i] - view.t[i-1]);
-        ctx.beginPath();
-        view.t.forEach((t, i) => {
-          if (!Number.isFinite(view.v[i])) { ctx.stroke(); ctx.beginPath(); return; }
-          if (i === 0 || t - view.t[i-1] > step * 1.5) ctx.moveTo(x(t), y(view.v[i]));
-          else ctx.lineTo(x(t), y(view.v[i]));
-        });
-        ctx.stroke();
+        ctx.lineWidth=1.25; ctx.beginPath(); let lastValid=false;
+        view.t.forEach((t,i) => { if (!Number.isFinite(view.v[i])) { lastValid=false; return; } if (lastValid) ctx.lineTo(x(t),y(view.v[i])); else ctx.moveTo(x(t),y(view.v[i])); lastValid=true; }); ctx.stroke();
       } else {
-        ctx.globalAlpha = 0.32;
-        for (let i = 0; i < view.t.length; i++) if (Number.isFinite(view.min[i])) ctx.fillRect(x(view.t[i]), y(view.max[i]), Math.max(1, Math.min(3, width / view.t.length)), Math.max(1, y(view.min[i]) - y(view.max[i])));
-        ctx.globalAlpha = 1;
+        const bucketWidth=Math.max(1,width/Math.max(view.t.length,1));
+        for (let i=0;i<view.t.length;i++) {
+          if (!Number.isFinite(view.min[i]) || !Number.isFinite(view.max[i])) continue;
+          const xx=x(view.t[i]), topY=y(view.max[i]), bottomY=y(view.min[i]);
+          ctx.globalAlpha=.3; ctx.fillRect(xx,topY,bucketWidth,Math.max(1,bottomY-topY)); ctx.globalAlpha=1; ctx.lineWidth=1;
+          ctx.beginPath(); ctx.moveTo(xx,topY); ctx.lineTo(xx+bucketWidth,topY); ctx.moveTo(xx,bottomY); ctx.lineTo(xx+bucketWidth,bottomY); ctx.stroke();
+        }
       }
-    });
-    if (cursor != null) { ctx.strokeStyle = css.getPropertyValue('--foreground'); ctx.beginPath(); ctx.moveTo(x(cursor), 24); ctx.lineTo(x(cursor), height); ctx.stroke(); }
-    if (app.range) { const a = x(app.range[0]), b = x(app.range[1]); ctx.fillStyle = 'rgba(56,189,248,.13)'; ctx.fillRect(a, 24, b-a, height-24); }
+    }
+    if (app.range) {
+      const a=x(app.range[0]),b=x(app.range[1]); ctx.fillStyle='rgba(56,189,248,.16)'; ctx.fillRect(a,24,b-a,height-24);
+      ctx.strokeStyle=color('--voltage'); ctx.lineWidth=1; for (const edge of [a,b]) { ctx.beginPath(); ctx.moveTo(edge,24); ctx.lineTo(edge,height); ctx.stroke(); }
+      ctx.fillStyle=color('--foreground'); ctx.fillText(formatTime(app.range[1]-app.range[0],app.range[1]-app.range[0]),Math.max(4,Math.min(a+5,width-80)),30);
+    }
+    if (cursor != null) { const xx=x(cursor); ctx.strokeStyle=color('--foreground'); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(xx+.5,24); ctx.lineTo(xx+.5,height); ctx.stroke(); const left=Math.max(0,Math.min(xx+4,width-82)); ctx.fillStyle=color('--background'); ctx.fillRect(left,1,80,19); ctx.fillStyle=color('--foreground'); ctx.fillText(formatTime(cursor,span),left+2,15); }
   }
-  function wheel(event: WheelEvent) {
-    event.preventDefault(); follow = false;
-    const anchor = time(event.offsetX), factor = Math.exp(event.deltaY * 0.001);
-    const [a,b] = app.viewRange;
-    const left = Math.max(0, anchor + (a-anchor)*factor);
-    const right = Math.max(left + 0.00001, anchor + (b-anchor)*factor);
-    app.viewRange = [left, right]; schedule();
+  function wheel(event: WheelEvent) { event.preventDefault(); follow=false; app.viewRange=zoomAt(app.viewRange,time(event.offsetX),Math.exp(event.deltaY*.001),duration(),minimumSpan()); schedule(); }
+  function down(event: PointerEvent) {
+    try { canvas.setPointerCapture(event.pointerId); } catch { /* Synthetic pointer events have no active pointer. */ }
+    const at=time(event.offsetX);
+    const start=app.range && Math.abs(x(app.range[0])-event.offsetX)<7, end=app.range && Math.abs(x(app.range[1])-event.offsetX)<7;
+    const mode=start ? 'start' : end ? 'end' : event.shiftKey || selecting ? 'select' : 'pan';
+    drag={x:event.offsetX,range:[...app.viewRange],mode,anchor:at}; if (mode === 'select') { follow=false; app.range=[at,at]; }
   }
-  function down(event: PointerEvent) { canvas.setPointerCapture(event.pointerId); drag = { x: event.offsetX, range: [...app.viewRange], shift: event.shiftKey || selecting }; if (drag.shift) { follow = false; app.range = [time(event.offsetX), time(event.offsetX)]; } }
   function move(event: PointerEvent) {
-    cursor = time(event.offsetX);
+    cursor=Math.max(0,Math.min(duration(),time(event.offsetX))); hoveredUart=null;
     if (drag) {
-      if (drag.shift) app.range = [Math.min(time(drag.x), time(event.offsetX)), Math.max(time(drag.x), time(event.offsetX))];
-      else {
-        follow = false;
-        const delta = (event.offsetX - drag.x) / width * (drag.range[1]-drag.range[0]);
-        const lo = Math.max(0, drag.range[0]-delta);
-        app.viewRange = [lo, lo + drag.range[1]-drag.range[0]];
-      }
+      if (drag.mode === 'select') app.range=[Math.min(drag.anchor,cursor),Math.max(drag.anchor,cursor)];
+      else if (drag.mode === 'start' && app.range) app.range=[Math.min(cursor,app.range[1]),app.range[1]];
+      else if (drag.mode === 'end' && app.range) app.range=[app.range[0],Math.max(cursor,app.range[0])];
+      else { follow=false; app.viewRange=panFrom(drag.range,event.offsetX-drag.x,width,duration(),minimumSpan()); }
       schedule();
-    } else draw();
+    } else { if (lanes.includes('rx') && event.offsetY >= topOf('rx') && event.offsetY <= topOf('rx')+40) hoveredUart=app.uart.find(chunk => event.offsetX >= x(chunk.t)-6 && event.offsetX <= x(chunk.t)+Math.max(8,printable(chunk.bytes).length*6+12)) ?? null; draw(); }
   }
-  function up() { drag = null; if (app.range && app.range[1]-app.range[0] < 0.000001) app.range = null; void app.refreshDetails(); }
-  function fit() { follow = false; app.viewRange = [0, Math.max(app.recording?.duration_s ?? 1, 0.001)]; schedule(); }
-  onMount(() => {
-    const observer = new ResizeObserver(() => { width = Math.max(1, host.clientWidth - 156); height = Math.max(1, host.clientHeight); schedule(); });
-    observer.observe(host); return () => observer.disconnect();
+  function up() { drag=null; if (app.range && app.range[1]-app.range[0]<1e-6) app.range=null; void app.refreshDetails(); }
+  function fit() { follow=false; app.viewRange=[0,duration()]; schedule(); }
+  function keydown(event: KeyboardEvent) { if (event.key === 'Escape') { app.range=null; void app.refreshDetails(); draw(); } }
+  onMount(() => { const observer=new ResizeObserver(() => { width=Math.max(1,host.clientWidth-150); availableHeight=Math.max(1,host.clientHeight); schedule(); }); observer.observe(host); window.addEventListener('keydown',keydown); return () => { observer.disconnect(); window.removeEventListener('keydown',keydown); }; });
+  $effect(() => {
+    const recording=app.recording, range=app.viewRange, theme=app.theme; void range; void theme;
+    const elapsed=recording?.duration_s ?? 0;
+    if (elapsed<previousDuration) { views.clear(); scales={}; visibleMeans={}; sampleSpacing=Infinity; follow=true; }
+    if (wasActive && recording && !recording.active) fit();
+    wasActive=recording?.active ?? false; previousDuration=elapsed;
+    if (follow && recording?.active) { const span=app.viewRange[1]-app.viewRange[0]; if (elapsed>span) app.viewRange=[elapsed-span,elapsed]; }
+    schedule();
   });
-  $effect(() => { const duration = app.recording?.duration_s ?? 0; app.viewRange; app.theme; if (duration < previousDuration) views.clear(); previousDuration = duration; if (follow && app.recording?.active) { const end = app.recording.duration_s; const span = app.viewRange[1]-app.viewRange[0]; if (end > span) app.viewRange = [end-span,end]; } schedule(); });
+  $effect(() => { app.edges; height; if (canvas) draw(); });
 </script>
 <section class="recording-panel">
-  <div class="recording-toolbar"><strong>Recording</strong><span>{app.recording?.duration_s.toFixed(2) ?? '0.00'} s · {app.recording?.gaps ?? 0} gaps</span><button onclick={() => { follow = !follow; schedule(); }} class:active={follow}>Follow</button><button onclick={() => selecting = !selecting} class:active={selecting}>Select range</button><button onclick={fit}>Fit</button></div>
+  <div class="recording-toolbar"><strong>Recording</strong><span>{app.recording?.duration_s.toFixed(2) ?? '0.00'} s · {app.recording?.gaps ?? 0} gaps</span><button onclick={() => { follow=!follow; schedule(); }} class:active={follow}>Follow</button><button onclick={() => selecting=!selecting} class:active={selecting}>Select range</button><button onclick={fit}>Fit</button></div>
   <div class="recording-stage" bind:this={host}>
-    <div class="lane-headers"><div class="axis-spacer"></div>{#each lanes as ch}<div class="lane-label" style:height={laneHeight + 'px'}><span class="lane-swatch" style:background={colors[ch] ?? (ch.startsWith('gpi') ? 'var(--digital)' : 'var(--uart)')}></span><strong>{ch}</strong>{#if ch in colors}<span class="lane-current">{currentValue(ch)}</span><button onclick={() => locked = locked.includes(ch) ? locked.filter(x => x !== ch) : [...locked,ch]} title="Lock y scale">{locked.includes(ch) ? '🔒' : '⌁'}</button>{/if}</div>{/each}</div>
-    <canvas bind:this={canvas} style:width={width + 'px'} style:height={height + 'px'} onwheel={wheel} onpointerdown={down} onpointermove={move} onpointerup={up} ondblclick={fit} onpointerleave={() => { cursor = null; draw(); }}></canvas>
+    <div class="lane-headers"><div class="axis-spacer"></div>{#each lanes as ch}
+      {#if ch === 'idle'}<button class="idle-lane" style:height={laneHeight(ch)+'px'} onclick={() => expandedIdle=true}>gpi{idle.length > 1 && idle.every((n,i) => n === idle[0]+i) ? idle[0]+'–'+idle.at(-1) : idle.join(', ')} idle ▾</button>
+      {:else}<div class="lane-label" style:height={laneHeight(ch)+'px'}><div class="lane-name"><span class="lane-swatch" style:background={colors[ch] ?? (ch.startsWith('gpi') ? 'var(--digital)' : 'var(--uart)')}></span><strong>{ch}</strong><small>{ch in colors ? unit(ch) : ''}</small></div>
+        {#if ch in colors}<div class="lane-value">{currentValue(ch)}</div><div class="lane-mean">mean {meanValue(ch)}</div><div class="lane-actions"><button onclick={() => { locked=locked.includes(ch) ? locked.filter(x => x !== ch) : [...locked,ch]; draw(); }} title="Lock y scale" aria-label={'Lock y scale for '+ch}>{locked.includes(ch) ? '🔒' : '⌁'}</button>{#if ch === 'mc' || ch === 'ac'}<button class:active={logarithmic.includes(ch)} onclick={() => { logarithmic=logarithmic.includes(ch) ? logarithmic.filter(x => x !== ch) : [...logarithmic,ch]; delete scales[ch]; draw(); }} title="Log scale" aria-label={'Log scale for '+ch}>log</button>{/if}</div>{/if}</div>{/if}
+    {/each}{#if expandedIdle && idle.length}<button class="idle-collapse" onclick={() => expandedIdle=false}>Collapse idle inputs</button>{/if}</div>
+    <div class="plot-surface"><canvas bind:this={canvas} style:width={width+'px'} style:height={height+'px'} onwheel={wheel} onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} ondblclick={fit} onpointerleave={() => { cursor=null; hoveredUart=null; draw(); }}></canvas>
+      {#if hoveredUart}<div class="uart-tooltip" style:left={Math.min(width-180,Math.max(4,x(hoveredUart.t)+8))+'px'} style:top={topOf('rx')+4+'px'}><time>{hoveredUart.t.toFixed(6)} s</time><span>{printable(hoveredUart.bytes)}</span><code>{hex(hoveredUart.bytes)}</code></div>{/if}
+    </div>
   </div>
 </section>

@@ -836,9 +836,14 @@ button:disabled {
 .recording-toolbar {height:48px;flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--border);}
 .recording-toolbar strong {font-size:14px;}.recording-toolbar span {font:11px "Geist Mono";color:var(--muted-foreground);margin-right:auto;}
 .recording-stage {display:flex;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;}
-.lane-headers {width:156px;flex:none;border-right:1px solid var(--border);}
+.lane-headers {width:150px;flex:none;border-right:1px solid var(--border);}
 .axis-spacer {height:32px;border-bottom:1px solid var(--border);}
-.lane-label {display:flex;align-items:flex-start;gap:8px;padding:9px 10px;border-bottom:1px solid var(--border);font:11px "Geist Mono";}
+.lane-label {position:relative;display:flex;flex-direction:column;gap:3px;padding:5px 9px;border-bottom:1px solid var(--border);font:11px "Geist Mono";overflow:hidden;}
+.lane-name {display:flex;align-items:center;gap:6px;}.lane-name small {color:var(--muted-foreground);font-size:10px;}
+.lane-value {font:11px "Geist Mono";white-space:nowrap;}.lane-mean {font:10px "Geist Mono";color:var(--muted-foreground);white-space:nowrap;}
+.lane-actions {position:absolute;right:5px;top:4px;display:flex;gap:2px;}.lane-actions button.active {color:var(--foreground);}
+.idle-lane,.idle-collapse {display:block;width:100%;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--muted-foreground);text-align:left;padding:3px 9px;font:10px "Geist Mono";cursor:pointer;}
+.plot-surface {position:relative;flex:none;}.uart-tooltip {position:absolute;z-index:5;display:flex;flex-direction:column;gap:2px;max-width:220px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--popover);color:var(--foreground);font:10px "Geist Mono";pointer-events:none;overflow-wrap:anywhere;}.uart-tooltip time {color:var(--muted-foreground);}
 .lane-label strong {font-weight:500;}.lane-label button {margin-left:auto;border:0;background:none;color:var(--muted-foreground);padding:0 3px;}
 .lane-current {margin-left:auto;color:var(--muted-foreground);font:10px "Geist Mono";}
 .lane-current + button {margin-left:0;}
@@ -854,3 +859,11 @@ button:disabled {
 .stats-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;padding:10px 12px;overflow:auto;max-height:100%;}
 .stats-grid div {display:flex;flex-direction:column;gap:3px;}.stats-grid strong {font-size:11px;color:var(--muted-foreground);font-weight:500;}
 .stats-grid code {font:11px "Geist Mono";white-space:normal;overflow-wrap:anywhere;}
+.selection-stats {max-height:100%;overflow:auto;padding:10px 12px;}
+.stats-table {display:grid;align-items:center;gap:0 12px;min-width:max-content;}
+.stats-table > * {padding:3px 5px;border-bottom:1px solid var(--border);}
+.stats-table strong,.stats-summary strong {font-size:11px;color:var(--muted-foreground);font-weight:500;}
+.stats-table code,.stats-summary code {font:11px "Geist Mono";}
+.stats-channel {display:flex;align-items:center;gap:6px;font:11px "Geist Mono";}
+.stats-summary {display:flex;gap:24px;padding-top:8px;border-top:1px solid var(--border);}
+.stats-summary div {display:flex;flex-direction:column;gap:3px;}

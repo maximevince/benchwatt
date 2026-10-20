@@ -92,7 +92,7 @@ class AppState {
     const [t0, t1] = this.range ?? this.viewRange;
     try {
       [this.stats, this.uart, this.edges] = await Promise.all([
-        backend.getStats(t0, t1), backend.getUart(0, this.recording.duration_s), backend.getEdges(this.viewRange[0], this.viewRange[1]),
+        backend.getStats(t0, t1), backend.getUart(0, this.recording.duration_s), backend.getEdges(0, this.recording.duration_s),
       ]);
     } catch (cause) { this.report(cause); }
   }
