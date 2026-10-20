@@ -195,12 +195,16 @@ impl Analog {
         (lo.min(self.len), hi.min(self.len).max(lo.min(self.len)))
     }
 }
+const UART_JOIN_S: f64 = 0.002;
+const UART_CHUNK_MAX: usize = 256;
 struct Channel {
     spec: ChannelSpec,
     a: Analog,
     edges: Vec<Edge>,
     digital_count: usize,
     uart: Vec<UartChunk>,
+    /// Arrival time of the newest rx bytes, for merging split bursts.
+    uart_end: f64,
     last: Option<u32>,
 }
 pub struct Recording {
@@ -224,6 +228,7 @@ impl Recording {
                             edges: Vec::new(),
                             digital_count: 0,
                             uart: Vec::new(),
+                            uart_end: f64::NEG_INFINITY,
                             last: None,
                         },
                     )
@@ -253,6 +258,7 @@ impl Recording {
             edges: Vec::new(),
             digital_count: 0,
             uart: Vec::new(),
+            uart_end: f64::NEG_INFINITY,
             last: None,
         });
     }
@@ -292,10 +298,24 @@ impl Recording {
                     }
                 }
             }
-            (Kind::Bytes, BlockBody::Bytes(v)) if !v.is_empty() => c.uart.push(UartChunk {
-                t,
-                bytes: v.clone(),
-            }),
+            (Kind::Bytes, BlockBody::Bytes(v)) if !v.is_empty() => {
+                // The Arc splits a burst across 1 ms packets; join the pieces so a line stays whole.
+                let joins = t - c.uart_end <= UART_JOIN_S;
+                match c.uart.last_mut() {
+                    Some(prev)
+                        if joins
+                            && prev.bytes.last() != Some(&b'\n')
+                            && prev.bytes.len() < UART_CHUNK_MAX =>
+                    {
+                        prev.bytes.extend_from_slice(v)
+                    }
+                    _ => c.uart.push(UartChunk {
+                        t,
+                        bytes: v.clone(),
+                    }),
+                }
+                c.uart_end = t;
+            }
             _ => {}
         }
     }

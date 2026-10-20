@@ -12,6 +12,10 @@ use std::{
 };
 use tauri::{Emitter, Manager};
 
+/// Last GPO levels set by this app. The Arc can't report them: gpiocfg (0x32) is a write-only
+/// change request and always reads back 0. `None` until set after (re)connecting.
+static GPO: Mutex<[Option<bool>; 3]> = Mutex::new([None; 3]);
+
 struct DeviceState {
     arc: Mutex<Option<OtiiArc>>,
     recording: Mutex<Option<Recording>>,
@@ -98,7 +102,6 @@ fn optional<T>(
     }
 }
 fn read_settings(arc: &OtiiArc) -> Result<Settings, Error> {
-    let gpio = optional(arc, 50, int_value)?;
     Ok(Settings {
         main: optional(arc, 9, bool_value)?,
         mainvolt: optional(arc, 11, number_value)?,
@@ -106,7 +109,7 @@ fn read_settings(arc: &OtiiArc) -> Result<Settings, Error> {
         mainsrccurrmode: optional(arc, 6, int_value)?,
         mainvolt_max: optional(arc, 0x80b, number_value)?,
         expvolt: optional(arc, 51, number_value)?,
-        gpo: std::array::from_fn(|n| gpio.map(|v| ((v >> (n * 3)) & 7) == 2)),
+        gpo: *GPO.lock().unwrap(),
         fourwire: optional(arc, 5, bool_value)?,
     })
 }
@@ -193,7 +196,11 @@ fn set_current_mode(state: tauri::State<'_, DeviceState>, mode: String) -> Resul
 }
 #[tauri::command]
 fn set_gpo(state: tauri::State<'_, DeviceState>, n: u8, on: bool) -> Result<Settings, Error> {
-    set_and_read(state, |arc| arc.set_gpo(n, on))
+    set_and_read(state, |arc| {
+        arc.set_gpo(n, on)?;
+        GPO.lock().unwrap()[usize::from(n - 1)] = Some(on);
+        Ok(())
+    })
 }
 
 #[derive(Clone, Serialize)]
@@ -414,6 +421,7 @@ fn worker(app: tauri::AppHandle) {
         }
         if let Some((Ok(arc), _)) = opened {
             let events = arc.events();
+            *GPO.lock().unwrap() = [None; 3];
             let initial = match read_settings(&arc) {
                 Ok(settings) => Some(settings),
                 Err(Error::Closed) => continue,

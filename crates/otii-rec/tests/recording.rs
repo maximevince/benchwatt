@@ -192,3 +192,23 @@ fn captured_session() {
     assert_eq!(r.sample_counts()["mc"], 4 * r.sample_counts()["mv"]);
     assert!(r.stats(0, 0.0, r.duration()).unwrap().mean.is_finite());
 }
+#[test]
+fn uart_bursts_split_across_packets_are_joined() {
+    let mut r = Recording::new(&[spec(0x17, "rx", Kind::Bytes, 0)]);
+    let rx = |r: &mut Recording, ms, s: &[u8]| r.push_block(ms, &block(0x17, BlockBody::Bytes(s.to_vec())));
+    for ms in 0..=1000 {
+        match ms {
+            816 => rx(&mut r, ms, b"hello a"),
+            817 => rx(&mut r, ms, b"pp\n"),
+            818 => rx(&mut r, ms, b"next"),
+            900 => rx(&mut r, ms, b"later"),
+            _ => r.push_block(ms, &block(0x17, BlockBody::Bytes(Vec::new()))),
+        }
+    }
+    let chunks = r.uart(0.0, 1.0);
+    let text: Vec<_> = chunks.iter().map(|c| (c.t, String::from_utf8_lossy(&c.bytes).into_owned())).collect();
+    assert_eq!(
+        text,
+        [(0.816, "hello app\n".into()), (0.818, "next".into()), (0.9, "later".into())]
+    );
+}
