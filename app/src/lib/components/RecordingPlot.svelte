@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { backend, type View, type UartChunk } from '$lib/backend';
   import { app } from '$lib/stores.svelte';
   import { formatReading } from '$lib/format';
@@ -171,15 +171,19 @@
   function fit() { follow=false; app.viewRange=[0,duration()]; schedule(); }
   function keydown(event: KeyboardEvent) { if (event.key === 'Escape') { app.range=null; void app.refreshDetails(); draw(); } }
   onMount(() => { const observer=new ResizeObserver(() => { width=Math.max(1,host.clientWidth-150); availableHeight=Math.max(1,host.clientHeight); schedule(); }); observer.observe(host); window.addEventListener('keydown',keydown); return () => { observer.disconnect(); window.removeEventListener('keydown',keydown); }; });
+  // Recording progress may move the view (follow/fit); untracked so writing viewRange can't re-trigger this effect.
   $effect(() => {
-    const recording=app.recording, range=app.viewRange, theme=app.theme; void range; void theme;
-    const elapsed=recording?.duration_s ?? 0;
-    if (elapsed<previousDuration) { views.clear(); scales={}; visibleMeans={}; sampleSpacing=Infinity; follow=true; }
-    if (wasActive && recording && !recording.active) fit();
-    wasActive=recording?.active ?? false; previousDuration=elapsed;
-    if (follow && recording?.active) { const span=app.viewRange[1]-app.viewRange[0]; if (elapsed>span) app.viewRange=[elapsed-span,elapsed]; }
-    schedule();
+    const recording=app.recording;
+    untrack(() => {
+      const elapsed=recording?.duration_s ?? 0;
+      if (elapsed<previousDuration) { views.clear(); scales={}; visibleMeans={}; sampleSpacing=Infinity; follow=true; }
+      if (wasActive && recording && !recording.active) fit();
+      wasActive=recording?.active ?? false; previousDuration=elapsed;
+      if (follow && recording?.active) { const span=app.viewRange[1]-app.viewRange[0]; if (elapsed>span) app.viewRange=[elapsed-span,elapsed]; }
+      schedule();
+    });
   });
+  $effect(() => { app.viewRange; app.theme; schedule(); });
   $effect(() => { app.edges; height; if (canvas) draw(); });
 </script>
 <section class="recording-panel">
