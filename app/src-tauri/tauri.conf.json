@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "OpenOtii", "width": 1160, "height": 800, "minWidth": 760, "minHeight": 620 }],
+    "windows": [{ "title": "OpenOtii", "width": 1160, "height": 800, "minWidth": 1100, "minHeight": 700 }],
     "security": { "csp": null }
   },
   "bundle": { "active": true, "targets": ["deb", "appimage"] }
