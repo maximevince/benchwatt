@@ -3,7 +3,7 @@
   import { backend, type View, type UartChunk } from '$lib/backend';
   import { app } from '$lib/stores.svelte';
   import { formatReading } from '$lib/format';
-  import { activeGpi, zoomAt, panFrom, type Range } from '$lib/view-math';
+  import { activeGpi, niceTicks, zoomAt, panFrom, type Range } from '$lib/view-math';
   let host: HTMLDivElement, canvas: HTMLCanvasElement;
   let width = $state(700), availableHeight = $state(400), version = $state(0);
   let follow = $state(true), selecting = $state(false), cursor = $state<number | null>(null);
@@ -28,6 +28,14 @@
   const kind = (ch: string): 'current' | 'voltage' | 'power' => ch === 'mc' || ch === 'ac' ? 'current' : ch === 'mp' ? 'power' : 'voltage';
   const unit = (ch: string) => ch === 'tp' ? '°C' : kind(ch) === 'current' ? 'A' : kind(ch) === 'power' ? 'W' : 'V';
   function reading(value: number, ch: string) { if (ch === 'tp') return Number.isFinite(value) ? value.toFixed(2)+' °C' : '—'; const r = formatReading(value, kind(ch)); return r.number.trim()+' '+r.unit; }
+  function axisReading(value: number, step: number, ch: string) {
+    if (ch === 'tp') return value.toFixed(Math.max(0, Math.ceil(-Math.log10(Math.abs(step) || 1))))+' °C';
+    const r = formatReading(value, kind(ch));
+    const factors: Record<string, number> = { A: 1, mA: 1e-3, µA: 1e-6, nA: 1e-9, W: 1, mW: 1e-3, µW: 1e-6, nW: 1e-9, V: 1, mV: 1e-3, µV: 1e-6 };
+    const factor=factors[r.unit] ?? 1, scaledStep=Math.abs(step/factor);
+    let decimals=0; while (decimals<12 && Math.abs(scaledStep*10**decimals-Math.round(scaledStep*10**decimals))>1e-8) decimals++;
+    return (value/factor).toFixed(decimals)+' '+r.unit;
+  }
   function currentValue(ch: string) {
     version; const view = views.get(ch);
     if (!view || cursor == null || !view.t.length) return '—';
@@ -101,9 +109,20 @@
       const log=logarithmic.includes(ch), transform=(v: number) => log ? Math.log10(Math.max(1e-9,v)) : v;
       const transformed=values.map(transform); let min=Math.min(...transformed), max=Math.max(...transformed);
       if (locked.includes(ch) && scales[ch]) [min,max]=scales[ch];
-      else { const pad=Math.max((max-min)*.1,log ? .05 : Math.max(Math.abs(min),Math.abs(max))*.01,1e-9); min-=pad; max+=pad; scales[ch]=[min,max]; }
+      else {
+        const dataMin=min, dataMax=max;
+        const pad=Math.max((max-min)*.1,log ? .05 : Math.max(Math.abs(min),Math.abs(max))*.01,1e-9);
+        min-=pad; max+=pad;
+        if (!log && dataMin >= 0) min=Math.max(0,min);
+        if (!log && dataMax <= 0) max=Math.min(0,max);
+        const ticks=niceTicks(min,max,5);
+        if (ticks.length > 1) [min,max]=[ticks[0],ticks.at(-1)!];
+        scales[ch]=[min,max];
+      }
       const y=(v: number) => bottom-8-(transform(v)-min)/(max-min)*(laneHeight(ch)-16);
-      for (let i=0;i<4;i++) { const tick=min+(max-min)*i/3, yy=bottom-8-i/3*(laneHeight(ch)-16); ctx.strokeStyle=color('--border'); ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(width,yy); ctx.stroke(); ctx.fillStyle=color('--muted-foreground'); ctx.fillText(reading(log ? 10**tick : tick,ch),4,yy-3); }
+      const ticks=niceTicks(min,max,5);
+      const tickStep=ticks.length > 1 ? ticks[1]-ticks[0] : max-min;
+      for (const tick of ticks) { const yy=bottom-8-(tick-min)/(max-min)*(laneHeight(ch)-16); ctx.strokeStyle=color('--border'); ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(width,yy); ctx.stroke(); ctx.fillStyle=color('--muted-foreground'); ctx.fillText(log ? reading(10**tick,ch) : axisReading(tick,tickStep,ch),4,yy-3); }
       const trace=color(colors[ch].slice(4,-1)); ctx.strokeStyle=trace; ctx.fillStyle=trace;
       if (view.kind === 'raw') {
         ctx.lineWidth=1.25; ctx.beginPath(); let lastValid=false;
@@ -113,7 +132,7 @@
         for (let i=0;i<view.t.length;i++) {
           if (!Number.isFinite(view.min[i]) || !Number.isFinite(view.max[i])) continue;
           const xx=x(view.t[i]), topY=y(view.max[i]), bottomY=y(view.min[i]);
-          ctx.globalAlpha=.3; ctx.fillRect(xx,topY,bucketWidth,Math.max(1,bottomY-topY)); ctx.globalAlpha=1; ctx.lineWidth=1;
+          ctx.globalAlpha=.45; ctx.fillRect(xx,topY,bucketWidth,Math.max(1,bottomY-topY)); ctx.globalAlpha=1; ctx.lineWidth=1;
           ctx.beginPath(); ctx.moveTo(xx,topY); ctx.lineTo(xx+bucketWidth,topY); ctx.moveTo(xx,bottomY); ctx.lineTo(xx+bucketWidth,bottomY); ctx.stroke();
         }
       }

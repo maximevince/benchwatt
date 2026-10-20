@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { activeGpi, panFrom, zoomAt } from './view-math';
+import { activeGpi, niceTicks, panFrom, zoomAt } from './view-math';
+
+describe('nice axis ticks', () => {
+  it('uses round 1-2-5 steps', () => {
+    expect(niceTicks(0, 30, 5)).toEqual([0, 10, 20, 30]);
+    expect(niceTicks(-0.8, 0.8, 5)).toEqual([-1, -0.5, 0, 0.5, 1]);
+  });
+  it('chooses the required decimal precision', () => {
+    expect(niceTicks(0.1, 0.3, 4)).toEqual([0.1, 0.2, 0.3]);
+  });
+});
 
 describe('recording view interactions', () => {
   it('holds the time beneath the pointer when wheel zooming', () => {

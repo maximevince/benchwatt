@@ -322,6 +322,25 @@ impl Recording {
     pub fn gaps(&self) -> &[Gap] {
         &self.gaps
     }
+    /// Native analog samples, without display gap markers or resampling.
+    pub fn analog_data(&self, ch: u16, t0: f64, t1: f64) -> Option<(Vec<f64>, Vec<f32>)> {
+        if !t0.is_finite() || !t1.is_finite() || t0 < 0.0 || t1 < t0 {
+            return None;
+        }
+        let channel = self.channels.get(&ch)?;
+        if channel.spec.kind != Kind::Analog {
+            return None;
+        }
+        let a = &channel.a;
+        let (lo, hi) = a.bounds(t0, t1);
+        let mut times = Vec::with_capacity(hi - lo);
+        let mut values = Vec::with_capacity(hi - lo);
+        for i in lo..hi {
+            times.push(a.time(i));
+            values.push(a.value(i));
+        }
+        Some((times, values))
+    }
     pub fn view(&self, ch: u16, t0: f64, t1: f64, px: usize) -> Option<View> {
         if !t0.is_finite() || !t1.is_finite() || t1 < t0 {
             return None;
