@@ -80,5 +80,5 @@
     </div>
   </div>
   {#if !pinned}<button class="uart-jump" onclick={() => { scroller.scrollTop=scroller.scrollHeight; pinned=true; }}>Jump to latest</button>{/if}
-  <form class="uart-send" onsubmit={e => { e.preventDefault(); void send(); }}><input aria-label="UART text to send" placeholder="Send text…" bind:value={outgoing} disabled={!app.uartOpen} onkeydown={sendKey}/><select aria-label="Line ending" bind:value={ending}><option>None</option><option>LF</option><option>CRLF</option></select><Button size="sm" disabled={!app.uartOpen || !outgoing}>Send</Button></form>
+  <form class="uart-send" onsubmit={e => { e.preventDefault(); void send(); }}><input aria-label="UART text to send" placeholder="Send text…" bind:value={outgoing} disabled={!app.uartOpen} onkeydown={sendKey}/><select aria-label="Line ending" bind:value={ending}><option>None</option><option>LF</option><option>CRLF</option></select><Button type="submit" size="sm" disabled={!app.uartOpen || !outgoing}>Send</Button></form>
 </div>
