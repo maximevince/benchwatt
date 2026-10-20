@@ -66,7 +66,7 @@ If device reports `_f`, host sets as `[id|0x1000, f32]`.
 | 0x1E | adcres          | i32 µΩ                                 |
 | 0x28 | uart            | enable                                 |
 | 0x29 | baudrate        | int                                    |
-| 0x32 | gpiocfg         | 3 bits per gpo at shift 0,3,6: 0 = unchanged, 1 = low, 2 = high [V gpo1] |
+| 0x32 | gpiocfg         | 3 bits per gpo at shift 0,3,6: 0 = unchanged, 1 = low, 2 = high. Write-only in effect: GET always returns 0, so the host must track GPO state [V] |
 | 0x33 | expvolt         | i32 µV                                 |
 | 0x34 | expoutvolt      | i32 µV                                 |
 | 0x80 | hwversion       | string ("1.3") [V]                     |
@@ -125,3 +125,10 @@ Recording: 0x78 per channel → 0x7C … 0x7E → 0x78 disable.
   low and 45 (bits 0,2,3,5) with gpo1 high, while the 0x16 monitor reports 0 / 9. Each gpiocfg
   write also produces a ~1 ms dip (to 9 or 0). Bits 2/5 may be floating inputs or a different bit
   layout in the data stream; bit 3 tracks gpo1 in both. Unresolved.
+
+## App testing notes (2026-10-20)
+- GET gpiocfg (0x32) returns 0 regardless of GPO state; the app caches the last level it set. [V]
+- UART rx: the Arc sends rx bytes in the 1 ms data packets, so a burst gets split across
+  consecutive packets ("hello a" + "pp\n"). Empty rx blocks (n=0) arrive every ms while rx is
+  enabled. Opening the UART mid-recording works; an rx channel enabled without SET uart=1 stays
+  silent. otii-rec joins pieces ≤ 2 ms apart until '\n' or 256 bytes. [V]
