@@ -19,6 +19,9 @@ export const channels: Record<string, Channel> = {
   tx: { label: 'UART TX', short: 'TX', unit: '', unitKind: 'uart', color: 'uart', kind: 'uart' },
 };
 
+/** GPI inputs wired on the Arc's expansion port (the gpi mask has 6 bits). */
+export const GPI_INPUTS = [1, 2];
+
 export function channel(id: string): Channel {
   if (/^gpi[1-6]$/.test(id)) return { ...channels.gpi, label: `Digital in ${id.slice(3)}`, short: `Digital in ${id.slice(3)}` };
   return channels[id] ?? { label: id, short: id, unit: '', unitKind: 'voltage', color: 'aux', kind: 'analog' };

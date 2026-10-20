@@ -473,13 +473,12 @@ button:disabled {
 }
 .gpi-list {
   display: flex;
-  justify-content: space-between;
-  gap: 7px;
+  gap: 22px;
 }
 .gpi-item {
-  display: grid;
-  justify-items: center;
-  gap: 5px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   color: var(--muted-foreground);
   font:
     10px "Geist Mono",
@@ -837,3 +836,4 @@ button:disabled {
 .unsaved-dot { display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--muted-foreground); vertical-align: middle; }
 .file-name { margin-left: 18px; padding-left: 14px; border-left: 1px solid var(--border); }
 [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="menubar-content"] { outline: none; }
+.gpo-title { margin-top: 16px; }

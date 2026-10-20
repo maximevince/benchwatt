@@ -357,6 +357,20 @@ impl Arc {
     pub fn set_current_limit(&self, amps: f64) -> Result<(), Error> {
         self.set(12, &PropertyValue::Number(amps))
     }
+    /// Apply settings the way the vendor app does after each change (cmd 0x68).
+    pub fn commit(&self) -> Result<(), Error> {
+        self.command(0x68, &[]).map(|_| ())
+    }
+    /// Expansion port I/O ("digital") voltage, 1.2–5 V on the Arc.
+    pub fn set_exp_voltage(&self, volts: f64) -> Result<(), Error> {
+        self.set(0x33, &PropertyValue::Number(volts))?;
+        self.commit()
+    }
+    /// The Arc's 5 V expansion pin: expoutvolt (0x34) set to 5 V or 0.
+    pub fn set_5v(&self, on: bool) -> Result<(), Error> {
+        self.set(0x34, &PropertyValue::Number(if on { 5.0 } else { 0.0 }))?;
+        self.commit()
+    }
     pub fn enable_channel(&self, ch: u32, on: bool) -> Result<(), Error> {
         let mut data = ch.to_le_bytes().to_vec();
         data.extend_from_slice(&u32::from(on).to_le_bytes());

@@ -91,6 +91,8 @@ class AppState {
     try {
       if (this.recording?.active) { this.recording = await backend.stopRecording(); return; }
       if (!await this.confirmDiscard()) return;
+      // The Arc only streams rx with its UART enabled, so recording UART RX opens it.
+      if (this.recordChannels.includes('rx') && !this.uartOpen) await this.toggleUart();
       this.recording = await backend.startRecording(this.recordChannels);
       this.hiddenLanes = [];
       this.range = null;

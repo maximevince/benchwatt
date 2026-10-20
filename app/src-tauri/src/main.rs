@@ -32,6 +32,7 @@ struct Settings {
     mainsrccurrmode: Option<i32>,
     mainvolt_max: Option<f64>,
     expvolt: Option<f64>,
+    five_volt: Option<bool>,
     gpo: [Option<bool>; 3],
     fourwire: Option<bool>,
 }
@@ -111,6 +112,7 @@ fn read_settings(arc: &OtiiArc) -> Result<Settings, Error> {
         mainsrccurrmode: optional(arc, 6, int_value)?,
         mainvolt_max: optional(arc, 0x80b, number_value)?,
         expvolt: optional(arc, 51, number_value)?,
+        five_volt: optional(arc, 0x34, number_value)?.map(|v| v > 0.0),
         gpo: *GPO.lock().unwrap(),
         fourwire: optional(arc, 5, bool_value)?,
     })
@@ -208,7 +210,22 @@ fn set_current_mode(state: tauri::State<'_, DeviceState>, mode: String) -> Resul
     set_and_read(state, |arc| arc.set(6, &PropertyValue::Enum(value)))
 }
 #[tauri::command]
+fn set_exp_voltage(state: tauri::State<'_, DeviceState>, volts: f64) -> Result<Settings, Error> {
+    if !volts.is_finite() || !(1.2..=5.0).contains(&volts) {
+        return Err(Error::Property("digital voltage must be between 1.2 and 5 V".into()));
+    }
+    set_and_read(state, |arc| arc.set_exp_voltage(volts))
+}
+#[tauri::command]
+fn set_5v(state: tauri::State<'_, DeviceState>, on: bool) -> Result<Settings, Error> {
+    set_and_read(state, |arc| arc.set_5v(on))
+}
+#[tauri::command]
 fn set_gpo(state: tauri::State<'_, DeviceState>, n: u8, on: bool) -> Result<Settings, Error> {
+    // The Arc has GPO1 and GPO2 (gpiocfg has room for a third).
+    if !(1..=2).contains(&n) {
+        return Err(Error::Property("GPO must be 1 or 2".into()));
+    }
     set_and_read(state, |arc| {
         arc.set_gpo(n, on)?;
         GPO.lock().unwrap()[usize::from(n - 1)] = Some(on);
@@ -625,6 +642,8 @@ fn main() {
             set_current_limit,
             set_current_mode,
             set_gpo,
+            set_exp_voltage,
+            set_5v,
             start_recording,
             stop_recording,
             recording_info,

@@ -2,7 +2,7 @@ import type { Backend, Command, Events, Settings, Monitor, Connection, Recording
 
 const disconnected = new URLSearchParams(window.location.search).has('disconnected');
 let connection: Connection = { connected: false };
-let settings: Settings = { main: false, mainvolt: 3.3, maxcur: 0.3, mainsrccurrmode: 0, mainvolt_max: 3.76, expvolt: 3.3, gpo: [false, false, false], fourwire: false };
+let settings: Settings = { main: false, mainvolt: 3.3, maxcur: 0.3, mainsrccurrmode: 0, mainvolt_max: 3.76, expvolt: 1.9, five_volt: false, gpo: [false, false, false], fourwire: false };
 const listeners = new Map<keyof Events, Set<(value: never) => void>>();
 function emit<K extends keyof Events>(name: K, value: Events[K]) {
   for (const handler of listeners.get(name) ?? []) handler(value as never);
@@ -121,7 +121,7 @@ function tick() {
     } else current = limit;
   }
   const mv = settings.main ? (settings.mainsrccurrmode === 1 && current >= limit ? Math.min(voltage, limit * 100) : voltage) : 0;
-  const monitor: Monitor = { mv, mc: current, mp: mv * current, vb: 5.05, vj: 0, tp: 23.0 + Math.sin(phase / 120) * 0.1, gpi: settings.gpo[0] ? 1 : 0, fourwire: settings.fourwire };
+  const monitor: Monitor = { mv, mc: current, mp: mv * current, vb: 5.05, vj: 0, tp: 23.0 + Math.sin(phase / 120) * 0.1, gpi: (settings.gpo[0] ? 1 : 0) | 0b100100, fourwire: settings.fourwire };
   emit('monitor', monitor);
 }
 if (!disconnected) window.setTimeout(() => {
@@ -148,8 +148,14 @@ function apply(name: Command, args: Record<string, unknown>) {
     case 'set_current_mode':
       if (args.mode !== 'cutoff' && args.mode !== 'limit') fail('mode must be cutoff or limit');
       settings = { ...settings, mainsrccurrmode: args.mode === 'limit' ? 1 : 0 }; break;
+    case 'set_exp_voltage':
+      if (typeof args.volts !== 'number' || !Number.isFinite(args.volts) || args.volts < 1.2 || args.volts > 5) fail('digital voltage must be between 1.2 and 5 V');
+      settings = { ...settings, expvolt: args.volts as number }; break;
+    case 'set_5v':
+      if (typeof args.on !== 'boolean') fail('invalid 5V state');
+      settings = { ...settings, five_volt: args.on as boolean }; break;
     case 'set_gpo':
-      if (!Number.isInteger(args.n) || (args.n as number) < 1 || (args.n as number) > 3 || typeof args.on !== 'boolean') fail('invalid GPO');
+      if (!Number.isInteger(args.n) || (args.n as number) < 1 || (args.n as number) > 2 || typeof args.on !== 'boolean') fail('invalid GPO');
       settings = { ...settings, gpo: settings.gpo.map((value, index) => index === (args.n as number) - 1 ? args.on as boolean : value) }; break;
   }
   emit('settings', { ...settings });

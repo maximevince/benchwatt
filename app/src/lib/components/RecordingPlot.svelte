@@ -3,9 +3,9 @@
   import { backend, type View, type UartChunk } from '$lib/backend';
   import { app } from '$lib/stores.svelte';
   import { formatReading } from '$lib/format';
-  import { channel } from '$lib/channels';
+  import { GPI_INPUTS, channel } from '$lib/channels';
   import SelectionCard from './SelectionCard.svelte';
-  import { activeGpi, niceTicks, zoomAt, panFrom, type Range } from '$lib/view-math';
+  import { niceTicks, zoomAt, panFrom, type Range } from '$lib/view-math';
   import { envelopeRuns, type EnvelopePoint } from '$lib/view';
   import { lineStartForChunk, linesFromChunks } from '$lib/uart';
   import { valuesAtTimeTsv } from '$lib/point-values';
@@ -20,8 +20,8 @@
   const views = new Map<string, View>(), inflight = new Set<string>();
   let drag: { x: number; range: Range; mode: 'pan' | 'select' | 'start' | 'end'; anchor: number } | null = null;
   const analog = $derived((app.recording?.channels ?? []).filter(ch => channel(ch).kind === 'analog'));
-  const active = $derived(activeGpi(app.edges));
-  const idle = $derived([1,2,3,4,5,6].filter(n => !active.includes(n)));
+  // The Arc wires GPI1–2 only; show both lanes whenever gpi is recorded.
+  const active = GPI_INPUTS, idle: number[] = [];
   const lanes = $derived([...analog, ...(app.recording?.channels.includes('gpi') ? [...active.map(n => 'gpi'+n), ...(idle.length ? expandedIdle ? idle.map(n => 'gpi'+n) : ['idle'] : [])] : []), ...(app.recording?.channels.some(ch => ch === 'rx' || ch === 'tx') ? ['rx'] : [])].filter(ch => !app.hiddenLanes.includes(ch)));
   const analogHeight = $derived(Math.max(110, (availableHeight - 32 - lanes.filter(ch => ch.startsWith('gpi') || ch === 'idle').length * 24 - (lanes.includes('rx') ? 44 : 0)) / Math.max(analog.length, 1)));
   const laneHeight = (ch: string) => ch === 'rx' ? 44 : ch.startsWith('gpi') || ch === 'idle' ? 24 : analogHeight;

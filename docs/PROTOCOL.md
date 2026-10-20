@@ -67,8 +67,8 @@ If device reports `_f`, host sets as `[id|0x1000, f32]`.
 | 0x28 | uart            | enable                                 |
 | 0x29 | baudrate        | int                                    |
 | 0x32 | gpiocfg         | 3 bits per gpo at shift 0,3,6: 0 = unchanged, 1 = low, 2 = high. Write-only in effect: GET always returns 0, so the host must track GPO state [V] |
-| 0x33 | expvolt         | i32 µV                                 |
-| 0x34 | expoutvolt      | i32 µV                                 |
+| 0x33 | expvolt         | i32 µV; expansion I/O ("digital") voltage, 1.2–5 V; no _min/_max on Arc [V] |
+| 0x34 | expoutvolt      | i32 µV; on the Arc this is the 5 V pin: vendor UI sets 5 V or 0, then commit (0x68) [V read/write] |
 | 0x80 | hwversion       | string ("1.3") [V]                     |
 | 0x81 | fwversion       | string ("3.1.3") [V]                   |
 | 0x82 | uid             | string [V]                             |
@@ -132,3 +132,6 @@ Recording: 0x78 per channel → 0x7C … 0x7E → 0x78 disable.
   consecutive packets ("hello a" + "pp\n"). Empty rx blocks (n=0) arrive every ms while rx is
   enabled. Opening the UART mid-recording works; an rx channel enabled without SET uart=1 stays
   silent. otii-rec joins pieces ≤ 2 ms apart until '\n' or 256 bytes. [V]
+- Arc expansion port: GPO1–2, GPI1–2, 5 V pin (expoutvolt), I/O voltage (expvolt). The gpi
+  mask has 6 bits; only bits 0–1 are inputs. Bit 3 follows GPO1 and bits 2/5 read high. [V]
+- The vendor app sends commit (0x68) after setting expvolt/expoutvolt; we do the same. [S]
