@@ -788,6 +788,23 @@ button:disabled {
 .stats-channel {display:flex;align-items:center;gap:6px;font:11px "Geist Mono";}
 .stats-summary {display:flex;gap:24px;padding-top:8px;border-top:1px solid var(--border);}
 .stats-summary div {display:flex;flex-direction:column;gap:3px;}
+.selection-card {position:absolute;top:34px;z-index:4;max-height:calc(100% - 40px);overflow:auto;padding:8px 10px;max-width:440px;border:1px solid var(--border);border-radius:6px;background:color-mix(in srgb,var(--popover) 94%,transparent);color:var(--popover-foreground);box-shadow:0 4px 16px rgba(0,0,0,.16);font:11px "Geist Sans",sans-serif;pointer-events:auto;}
+.selection-card-heading {display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap;}
+.selection-card-heading strong {font:600 11px "Geist Mono",monospace;font-variant-numeric:tabular-nums;}
+.selection-card-heading time {min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--muted-foreground);font:10px "Geist Mono",monospace;font-variant-numeric:tabular-nums;}
+.selection-card-actions {display:flex;gap:1px;margin-left:auto;}
+.selection-card-actions button {display:grid;place-items:center;width:19px;height:19px;border:0;border-radius:3px;background:transparent;color:var(--muted-foreground);cursor:pointer;}
+.selection-card-actions button:hover {background:var(--muted);color:var(--foreground);}
+.selection-card-body {padding-top:5px;}
+.selection-card-grid {display:grid;grid-template-columns:auto repeat(4,auto);align-items:center;gap:4px 14px;min-width:0;}
+.selection-card-grid > span {color:var(--muted-foreground);font-size:10px;text-align:right;}
+.selection-card-label {display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+.selection-card-label .swatch {flex:none;}
+.selection-card-grid code,.selection-card-footer code {font:10px "Geist Mono",monospace;font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right;}
+.selection-card-grid code {overflow:hidden;text-overflow:ellipsis;}
+.selection-card-footer {display:grid;grid-template-columns:1fr auto;gap:3px 14px;margin-top:6px;padding-top:6px;border-top:1px solid var(--border);}
+.selection-card-footer span {color:var(--muted-foreground);}
+.selection-card-loading {margin:4px 0;color:var(--muted-foreground);}
 
 .plot-empty {height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--muted-foreground);}
 .plot-empty p {margin:0;font-size:14px;color:var(--foreground);}

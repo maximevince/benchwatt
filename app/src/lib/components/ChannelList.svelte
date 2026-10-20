@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from '$lib/stores.svelte';
-  const channels = [{ key: 'mc', label: 'Current', color: 'current' }, { key: 'mv', label: 'Voltage', color: 'voltage' }, { key: 'mp', label: 'Power', color: 'power' }, { key: 'ac', label: 'ADC current', color: 'teal' }, { key: 'av', label: 'ADC voltage', color: 'cyan' }, { key: 'vb', label: 'VBUS', color: 'aux' }, { key: 'tp', label: 'Temperature', color: 'aux' }, { key: 'gpi', label: 'GPI 1–6', color: 'digital' }, { key: 'rx', label: 'UART RX', color: 'uart' }];
+  import { channel } from '$lib/channels';
+  const channelIds = ['mc', 'mv', 'mp', 'ac', 'av', 'vb', 'tp', 'gpi', 'rx'];
   function choose(key: string, on: boolean) { app.recordChannels = on ? [...app.recordChannels, key] : app.recordChannels.filter(x => x !== key); }
 </script>
-<section class="sidebar-section" aria-label="Channels"><div class="section-heading"><h2>Channels</h2><span class="section-meta">RECORD</span></div><div class="channel-list">{#each channels as channel}<label class="channel-row"><input type="checkbox" checked={app.recordChannels.includes(channel.key)} disabled={app.recording?.active} onchange={e => choose(channel.key, e.currentTarget.checked)}/><i class="swatch" data-channel={channel.color}></i><span>{channel.label}</span><code>{channel.key}</code></label>{/each}</div></section>
+<section class="sidebar-section" aria-label="Channels"><div class="section-heading"><h2>Channels</h2><span class="section-meta">RECORD</span></div><div class="channel-list">{#each channelIds as id}<label class="channel-row" title={id}><input type="checkbox" checked={app.recordChannels.includes(id)} disabled={app.recording?.active} onchange={e => choose(id, e.currentTarget.checked)}/><i class="swatch" data-channel={channel(id).color}></i><span>{channel(id).label}</span></label>{/each}</div></section>

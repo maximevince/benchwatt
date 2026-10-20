@@ -26,6 +26,9 @@ top bar, persisted; default follows the OS).
 | foreground | zinc-50 | zinc-950 |
 
 Color only where it means something:
+- UI labels use human channel names (for example, “Current” and “Digital in 2”). Protocol
+  ids such as `mc` stay in data, exports, and tooltips; `app/src/lib/channels.ts` owns labels,
+  units, channel kinds, and colors.
 - **Channel colors** (traces, swatches, readout accents) — fixed per channel everywhere:
   current `mc` **amber-400 `#fbbf24`**, voltage `mv` **sky-400 `#38bdf8`**, power `mp`
   **violet-400 `#a78bfa`**, ADC `ac/av` **teal/cyan-400**, VBUS/aux voltages **slate-400**,
@@ -70,6 +73,9 @@ Color only where it means something:
 - Setpoint inputs: compact, unit suffix inside the input, Enter/blur applies; a subtle check
   flash when the device confirms; show the device's limit (e.g. "max 3.76 V") as helper text.
 - Bottom drawer resizable/collapsible; Alerts tab shows a badge count.
+- A selection shows a compact, collapsible measurement card beside its band in the plot.
+  It displays duration, min/avg/max and charge or energy, and offers copy and clear actions.
+  The bottom Selection stats tab remains available.
 - Disconnected state: everything stays laid out but dimmed/disabled; centered "Waiting for
   Arc…" overlay in the plot area with a hint about the udev rule.
 - Keyboard: `Space` toggles output only with a confirm-less but visible toast; `R` start/stop

@@ -3,6 +3,7 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { backend, type Alert, type Command, type Connection, type Monitor, type Settings, type RecordingInfo, type AllStats, type UartChunk, type Edge } from './backend';
 import { describeAlert } from './alerts';
+import { channel } from './channels';
 
 export type AlertEntry = Alert & { key: number; time: string };
 const emptyMonitor = (): Monitor => ({ mv: null, mc: null, mp: null, vb: null, vj: null, tp: null, gpi: null, fourwire: null });
@@ -37,6 +38,7 @@ class AppState {
   uartOpen = $state(false);
   private key = 0;
   private detailsSeq = 0;
+  private statsSeq = 0;
   get darkTheme() { return this.theme === 'dark' || (this.theme === 'system' && this.systemDark); }
   get disabled() { return !this.connection.connected || this.busy; }
   initTheme() {
@@ -134,18 +136,24 @@ class AppState {
   centerUart(t: number) { const span=this.viewRange[1]-this.viewRange[0]; if (t < this.viewRange[0] || t > this.viewRange[1]) this.viewRange=[Math.max(0,t-span/2),Math.max(span,t+span/2)]; this.marker=t; this.focusedUartTime=t; }
   async toggleUart() { try { if (this.uartOpen) await backend.uartClose(); else await backend.uartOpen(this.baud); this.uartOpen = !this.uartOpen; if (this.uartOpen) { this.drawerTab='uart'; this.drawerOpen=true; } } catch (cause) { this.report(cause); } }
   baud = $state(115200);
-  async copyStats() { if (!this.stats) return; const rows=[['channel','count','min','max','mean','rms','integral'].join('\t'),...Object.entries(this.stats.channels).map(([ch,s]) => [ch,s.count,s.min,s.max,s.mean,s.rms,s.integral].join('\t'))]; await navigator.clipboard.writeText(rows.join('\n')); toast.success('Selection stats copied'); }
+  async copyStats() { if (!this.stats) return; const rows=[['channel','count','min','max','mean','rms','integral'].join('\t'),...Object.entries(this.stats.channels).map(([ch,s]) => [channel(ch).label,s.count,s.min,s.max,s.mean,s.rms,s.integral].join('\t'))]; await navigator.clipboard.writeText(rows.join('\n')); toast.success('Selection stats copied'); }
+  async refreshStats() {
+    if (!this.recording || !this.range || this.range[0] === this.range[1]) return;
+    const [t0, t1] = this.range, seq = ++this.statsSeq;
+    try { const stats = await backend.getStats(t0, t1); if (seq === this.statsSeq) this.stats = stats; }
+    catch (cause) { if (seq === this.statsSeq) this.report(cause); }
+  }
   async refreshDetails() {
     if (!this.recording) return;
     const [t0, t1] = this.range ?? this.viewRange;
     try {
-      const seq = ++this.detailsSeq;
+      const seq = ++this.detailsSeq, statsSeq = ++this.statsSeq;
       const uartFrom = this.uart.at(-1)?.t ?? 0;
       const [stats, tail, edges] = await Promise.all([
         backend.getStats(t0, t1), backend.getUart(uartFrom, this.recording.duration_s), backend.getEdges(0, this.recording.duration_s),
       ]);
       if (seq !== this.detailsSeq) return;
-      this.stats = stats;
+      if (statsSeq === this.statsSeq) this.stats = stats;
       this.uart = [...this.uart.filter(x => x.t < uartFrom), ...tail];
       this.edges = edges;
     } catch (cause) { this.report(cause); }

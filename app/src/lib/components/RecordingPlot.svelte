@@ -3,6 +3,8 @@
   import { backend, type View, type UartChunk } from '$lib/backend';
   import { app } from '$lib/stores.svelte';
   import { formatReading } from '$lib/format';
+  import { channel } from '$lib/channels';
+  import SelectionCard from './SelectionCard.svelte';
   import { activeGpi, niceTicks, zoomAt, panFrom, type Range } from '$lib/view-math';
   import { envelopeRuns, type EnvelopePoint } from '$lib/view';
   import { lineStartForChunk } from '$lib/uart';
@@ -14,8 +16,7 @@
   let scales: Record<string, Range> = {}, visibleMeans: Record<string, number> = {}, sampleSpacing = Infinity, previousDuration = 0, wasActive = false, queued = false;
   const views = new Map<string, View>(), inflight = new Set<string>();
   let drag: { x: number; range: Range; mode: 'pan' | 'select' | 'start' | 'end'; anchor: number } | null = null;
-  const colors: Record<string, string> = { mc: 'var(--current)', mv: 'var(--voltage)', mp: 'var(--power)', ac: 'var(--teal)', av: 'var(--cyan)', vb: 'var(--aux)', tp: 'var(--aux)' };
-  const analog = $derived((app.recording?.channels ?? []).filter(ch => ch in colors));
+  const analog = $derived((app.recording?.channels ?? []).filter(ch => channel(ch).kind === 'analog'));
   const active = $derived(activeGpi(app.edges));
   const idle = $derived([1,2,3,4,5,6].filter(n => !active.includes(n)));
   const lanes = $derived([...analog, ...(app.recording?.channels.includes('gpi') ? [...active.map(n => 'gpi'+n), ...(idle.length ? expandedIdle ? idle.map(n => 'gpi'+n) : ['idle'] : [])] : []), ...(app.recording?.channels.some(ch => ch === 'rx' || ch === 'tx') ? ['rx'] : [])]);
@@ -28,11 +29,11 @@
   function uartIndex(t: number) { let lo=0, hi=app.uart.length; while (lo<hi) { const mid=(lo+hi)>>1; if (app.uart[mid].t<t) lo=mid+1; else hi=mid; } return lo; }
   const minimumSpan = () => Math.max(1e-6, 20 * Math.min(sampleSpacing, (app.recording?.duration_s ?? 1) / Math.max(1, ...analog.map(ch => app.recording?.samples[ch] ?? 0))));
   const duration = () => Math.max(app.recording?.duration_s ?? 0, minimumSpan());
-  const kind = (ch: string): 'current' | 'voltage' | 'power' => ch === 'mc' || ch === 'ac' ? 'current' : ch === 'mp' ? 'power' : 'voltage';
-  const unit = (ch: string) => ch === 'tp' ? '°C' : kind(ch) === 'current' ? 'A' : kind(ch) === 'power' ? 'W' : 'V';
-  function reading(value: number, ch: string) { if (ch === 'tp') return Number.isFinite(value) ? value.toFixed(2)+' °C' : '—'; const r = formatReading(value, kind(ch)); return r.number.trim()+' '+r.unit; }
+  const kind = (ch: string): 'current' | 'voltage' | 'power' => { const unitKind=channel(ch).unitKind; return unitKind === 'current' || unitKind === 'power' ? unitKind : 'voltage'; };
+  const unit = (ch: string) => channel(ch).unit;
+  function reading(value: number, ch: string) { if (channel(ch).unitKind === 'temperature') return Number.isFinite(value) ? value.toFixed(2)+' °C' : '—'; const r = formatReading(value, kind(ch)); return r.number.trim()+' '+r.unit; }
   function axisReading(value: number, step: number, ch: string) {
-    if (ch === 'tp') return value.toFixed(Math.max(0, Math.ceil(-Math.log10(Math.abs(step) || 1))))+' °C';
+    if (channel(ch).unitKind === 'temperature') return value.toFixed(Math.max(0, Math.ceil(-Math.log10(Math.abs(step) || 1))))+' °C';
     const r = formatReading(value, kind(ch));
     const factors: Record<string, number> = { A: 1, mA: 1e-3, µA: 1e-6, nA: 1e-9, W: 1, mW: 1e-3, µW: 1e-6, nW: 1e-9, V: 1, mV: 1e-3, µV: 1e-6 };
     const factor=factors[r.unit] ?? 1, scaledStep=Math.abs(step/factor);
@@ -141,7 +142,7 @@
       const tickStep=ticks.length > 1 ? ticks[1]-ticks[0] : max-min;
       const eps=(max-min)*1e-6;
       for (const tick of ticks.filter(t => t >= min-eps && t <= max+eps)) { const yy=bottom-8-(tick-min)/(max-min)*(laneHeight(ch)-16); ctx.strokeStyle=color('--border'); ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(width,yy); ctx.stroke(); ctx.fillStyle=color('--muted-foreground'); ctx.fillText(log ? reading(10**tick,ch) : axisReading(tick,tickStep,ch),4,yy-3); }
-      const trace=color(colors[ch].slice(4,-1)); ctx.strokeStyle=trace; ctx.fillStyle=trace;
+      const trace=color('--'+channel(ch).color); ctx.strokeStyle=trace; ctx.fillStyle=trace;
       if (view.kind === 'raw') {
         ctx.lineWidth=1.25; ctx.beginPath(); let lastValid=false;
         view.t.forEach((t,i) => { if (!Number.isFinite(view.v[i])) { lastValid=false; return; } if (lastValid) ctx.lineTo(x(t),y(view.v[i])); else ctx.moveTo(x(t),y(view.v[i])); lastValid=true; }); ctx.stroke();
@@ -202,16 +203,18 @@
   });
   $effect(() => { app.viewRange; app.theme; schedule(); });
   $effect(() => { app.edges; app.marker; app.hoverMarker; height; if (canvas) draw(); });
+  $effect(() => { const range=app.range; if (!range || range[0] === range[1]) return; const frame=requestAnimationFrame(() => void app.refreshStats()); return () => cancelAnimationFrame(frame); });
 </script>
 <section class="recording-panel">
   <div class="recording-toolbar"><strong>Recording</strong><span>{app.recording?.duration_s.toFixed(2) ?? '0.00'} s · {app.recording?.gaps ?? 0} gaps</span><button onclick={() => { app.follow=!app.follow; schedule(); }} class:active={app.follow}>Follow</button><button onclick={() => selecting=!selecting} class:active={selecting}>Select range</button><button onclick={fit}>Fit</button></div>
   <div class="recording-stage" bind:this={host}>
     <div class="lane-headers"><div class="axis-spacer"></div>{#each lanes as ch}
-      {#if ch === 'idle'}<button class="idle-lane" style:height={laneHeight(ch)+'px'} onclick={() => expandedIdle=true}>gpi{idle.length > 1 && idle.every((n,i) => n === idle[0]+i) ? idle[0]+'–'+idle.at(-1) : idle.join(', ')} idle ▾</button>
-      {:else}<div class="lane-label" style:height={laneHeight(ch)+'px'}><div class="lane-name"><span class="lane-swatch" style:background={colors[ch] ?? (ch.startsWith('gpi') ? 'var(--digital)' : 'var(--uart)')}></span><strong>{ch}</strong><small>{ch in colors ? unit(ch) : ''}</small></div>
-        {#if ch in colors}<div class="lane-value">{currentValue(ch)}</div><div class="lane-mean">mean {meanValue(ch)}</div><div class="lane-actions"><button onclick={() => { locked=locked.includes(ch) ? locked.filter(x => x !== ch) : [...locked,ch]; draw(); }} title="Lock y scale" aria-label={'Lock y scale for '+ch}>{locked.includes(ch) ? '🔒' : '⌁'}</button>{#if ch === 'mc' || ch === 'ac'}<button class:active={logarithmic.includes(ch)} onclick={() => { logarithmic=logarithmic.includes(ch) ? logarithmic.filter(x => x !== ch) : [...logarithmic,ch]; delete scales[ch]; draw(); }} title="Log scale" aria-label={'Log scale for '+ch}>log</button>{/if}</div>{/if}</div>{/if}
+      {#if ch === 'idle'}<button class="idle-lane" style:height={laneHeight(ch)+'px'} onclick={() => expandedIdle=true}>Digital in {idle.length > 1 && idle.every((n,i) => n === idle[0]+i) ? idle[0]+'–'+idle.at(-1) : idle.join(', ')} idle ▾</button>
+      {:else}<div class="lane-label" style:height={laneHeight(ch)+'px'}><div class="lane-name"><span class="lane-swatch" style:background={'var(--'+channel(ch).color+')'}></span><strong title={ch}>{ch === 'rx' && app.recording?.channels.includes('tx') ? app.recording.channels.includes('rx') ? 'UART RX / TX' : channel('tx').label : channel(ch).label}</strong><small>{channel(ch).kind === 'analog' ? unit(ch) : ''}</small></div>
+        {#if channel(ch).kind === 'analog'}<div class="lane-value">{currentValue(ch)}</div><div class="lane-mean">mean {meanValue(ch)}</div><div class="lane-actions"><button onclick={() => { locked=locked.includes(ch) ? locked.filter(x => x !== ch) : [...locked,ch]; draw(); }} title="Lock y scale" aria-label={'Lock y scale for '+channel(ch).label}>{locked.includes(ch) ? '🔒' : '⌁'}</button>{#if channel(ch).unitKind === 'current'}<button class:active={logarithmic.includes(ch)} onclick={() => { logarithmic=logarithmic.includes(ch) ? logarithmic.filter(x => x !== ch) : [...logarithmic,ch]; delete scales[ch]; draw(); }} title="Log scale" aria-label={'Log scale for '+channel(ch).label}>log</button>{/if}</div>{/if}</div>{/if}
     {/each}{#if expandedIdle && idle.length}<button class="idle-collapse" onclick={() => expandedIdle=false}>Collapse idle inputs</button>{/if}</div>
     <div class="plot-surface"><canvas bind:this={canvas} style:width={width+'px'} style:height={height+'px'} onwheel={wheel} onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} ondblclick={fit} onpointerleave={() => { cursor=null; hoveredUart=null; draw(); }}></canvas>
+      {#if app.range}<SelectionCard range={app.range} viewRange={app.viewRange} {width} stats={app.stats}/>{/if}
       {#if hoveredUart}<div class="uart-tooltip" style:left={Math.min(width-180,Math.max(4,x(hoveredUart.t)+8))+'px'} style:top={topOf('rx')-4+'px'} style:transform="translateY(-100%)"><time>{hoveredUart.t.toFixed(6)} s</time><span>{printable(hoveredUart.bytes)}</span><code>{hex(hoveredUart.bytes)}</code></div>{/if}
     </div>
   </div>
