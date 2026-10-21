@@ -1,3 +1,5 @@
+mod human;
+
 use clap::{Parser, Subcommand};
 use otii_arc::{
     Arc, Event,
@@ -19,7 +21,7 @@ use std::{
 };
 
 #[derive(Parser)]
-#[command(name = "otii", version)]
+#[command(name = "openotii", version)]
 struct Cli {
     #[arg(short, long, global = true)]
     port: Option<String>,
@@ -157,10 +159,9 @@ fn main() {
     }
 }
 fn print_human(v: &Value) {
-    if let Some(s) = v.as_str() {
+    let s = human::render(v);
+    if !s.is_empty() {
         println!("{s}");
-    } else {
-        println!("{}", serde_json::to_string_pretty(v).unwrap());
     }
 }
 fn parse_number(s: &str) -> Result<f64> {
@@ -496,8 +497,8 @@ fn validate_live(command: &Command) -> Result<()> {
             check_extension(output)?;
         }
         Command::Gpo { n, state } => {
-            if !(1..=3).contains(n) {
-                return Err(Failure::usage("GPO must be 1..=3"));
+            if !(1..=2).contains(n) {
+                return Err(Failure::usage("GPO must be 1 or 2"));
             }
             parse_bool(state)?;
         }
@@ -572,11 +573,11 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
         }
         Command::On => {
             dev(arc.output(true))?;
-            json!({"power":"on"})
+            json!({"output":true})
         }
         Command::Off => {
             dev(arc.output(false))?;
-            json!({"power":"off"})
+            json!({"output":false})
         }
         Command::Volt { v } => {
             let n = value_unit(&v, "V")?;
@@ -594,11 +595,16 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
             mode,
             state,
         } => {
+            let mut applied = serde_json::Map::new();
             if let Some(v) = volt {
-                dev(arc.set_voltage(value_unit(&v, "V")?))?
+                let n = value_unit(&v, "V")?;
+                dev(arc.set_voltage(n))?;
+                applied.insert("voltage_V".into(), json!(n));
             }
             if let Some(a) = ilim {
-                dev(arc.set_current_limit(value_unit(&a, "A")?))?
+                let n = value_unit(&a, "A")?;
+                dev(arc.set_current_limit(n))?;
+                applied.insert("current_limit_A".into(), json!(n));
             }
             if let Some(m) = mode {
                 let id = match m.as_str() {
@@ -606,12 +612,15 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
                     "limit" => 1,
                     _ => return Err(Failure::usage("mode must be cutoff or limit")),
                 };
-                dev(arc.set(6, &PropertyValue::Enum(id)))?
+                dev(arc.set(6, &PropertyValue::Enum(id)))?;
+                applied.insert("mode".into(), json!(m));
             }
             if let Some(s) = state {
-                dev(arc.output(parse_bool(&s)?))?
+                let on = parse_bool(&s)?;
+                dev(arc.output(on))?;
+                applied.insert("output".into(), json!(on));
             }
-            json!({"power":"configured"})
+            Value::Object(applied)
         }
         Command::Measure {
             ch,
