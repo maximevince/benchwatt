@@ -39,6 +39,6 @@ For a CI power regression check, for example:
 
 `.csv` exports a single wide file at the highest analog sample rate. Lower rate analog channels hold their last sample for each packet; missing data produces empty cells. The library also provides `export_csv_channel` for native rate `time_s,value` output and accepts an optional time range for either CSV exporter.
 
-`.sr` exports a sigrok srzip session at the highest analog sample rate, with analog f32 samples and six GPI logic probes if GPI was recorded. Gaps are NaN in analog channels and retain the last logic level. UART bytes are not exported to `.sr`; use `.otii-rec` to retain UART data. The srzip layout follows [libsigrok's exporter](https://github.com/sigrokproject/libsigrok/blob/master/src/output/srzip.c).
+`.sr` exports a sigrok srzip session at the highest analog sample rate, with analog f32 samples and two logic probes (GPI1 and GPI2) if digital inputs were recorded. Gaps are NaN in analog channels and retain the last logic level. UART bytes are not exported to `.sr`; use `.otii-rec` to retain UART data. The srzip layout follows [libsigrok's exporter](https://github.com/sigrokproject/libsigrok/blob/master/src/output/srzip.c).
 
 The existing `get`, `set`, `on`, `off`, `volt`, `ilim`, `monitor`, `uart`, and `gpo` commands remain available. The old `record --secs` form is also accepted.

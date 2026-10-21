@@ -97,6 +97,8 @@ pub fn export_csv_channel(
 pub fn export_sr(rec: &Recording, path: impl AsRef<Path>) -> io::Result<()> {
     export_sr_range(rec, path, None)
 }
+const GPI_PROBES: usize = 2;
+
 pub fn export_sr_range(
     rec: &Recording,
     path: impl AsRef<Path>,
@@ -113,7 +115,8 @@ pub fn export_sr_range(
         .specs()
         .iter()
         .any(|s| s.kind == Kind::Digital && s.id == 0x16);
-    let probes = if logic { 6 } else { 0 };
+    // The Arc has two digital inputs; the other mask bits aren't real inputs.
+    let probes = if logic { GPI_PROBES } else { 0 };
     // Keys and analog numbering follow libsigrok's src/output/srzip.c, zip_create()
     // and zip_append_analog(): https://github.com/sigrokproject/libsigrok/blob/master/src/output/srzip.c
     let mut metadata = format!(
@@ -121,8 +124,8 @@ pub fn export_sr_range(
         analog.len()
     );
     if logic {
-        metadata.push_str("capturefile=logic-1\ntotal probes=6\n");
-        for i in 1..=6 {
+        metadata.push_str(&format!("capturefile=logic-1\ntotal probes={GPI_PROBES}\n"));
+        for i in 1..=GPI_PROBES {
             metadata.push_str(&format!("probe{i}=gpi{i}\n"));
         }
     }
@@ -157,7 +160,7 @@ pub fn export_sr_range(
                 mask = edges[pos].mask;
                 pos += 1;
             }
-            zip.write_all(&[(mask & 0x3f) as u8])?;
+            zip.write_all(&[(mask & ((1 << GPI_PROBES) - 1)) as u8])?;
         }
     }
     zip.finish().map_err(io::Error::other)?;

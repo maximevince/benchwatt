@@ -104,9 +104,9 @@ fn csv_and_sr() {
         .unwrap()
         .read_to_string(&mut meta)
         .unwrap();
-    assert!(meta.contains("analog7=mc"));
-    assert!(meta.contains("total probes=6"));
-    assert_eq!(z.by_name("analog-1-7-1").unwrap().size(), 16 * 4);
+    assert!(meta.contains("analog3=mc"));
+    assert!(meta.contains("total probes=2"));
+    assert_eq!(z.by_name("analog-1-3-1").unwrap().size(), 16 * 4);
     assert_eq!(z.by_name("logic-1-1").unwrap().size(), 16);
     fs::remove_file(sr).unwrap();
 }
