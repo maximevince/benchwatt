@@ -25,7 +25,7 @@
       void getCurrentWindow().onCloseRequested(async event => {
         if (!app.unsaved || app.closingApproved) return;
         event.preventDefault();
-        if (await app.confirmDiscard()) { app.closingApproved = true; await getCurrentWindow().close(); }
+        if (await app.confirmDiscard()) { app.closingApproved = true; await getCurrentWindow().destroy(); }
       }).then(off => { const prior=cleanup; cleanup=() => { prior?.(); off(); }; });
     }
     return () => { active = false; cleanup?.(); };

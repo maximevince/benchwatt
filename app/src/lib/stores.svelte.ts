@@ -145,7 +145,7 @@ class AppState {
     if (this.range) { this.exportFormat = extension; this.dialog = 'export'; } else await this.exportRecording(extension);
   }
   exportFormat = $state<'csv' | 'sr'>('csv');
-  async quit() { if (!await this.confirmDiscard()) return; if (this.mock()) toast.info('Quit is available in the desktop app'); else { this.closingApproved = true; await getCurrentWindow().close(); } }
+  async quit() { if (!await this.confirmDiscard()) return; if (this.mock()) toast.info('Quit is available in the desktop app'); else { this.closingApproved = true; await getCurrentWindow().destroy(); } }
   selectAll() { if (this.recording) { this.range = [0,this.recording.duration_s]; void this.refreshDetails(); } }
   clearSelection() { this.range = null; void this.refreshDetails(); }
   zoom(factor: number) { const [a,b] = this.viewRange; const mid=(a+b)/2, span=Math.max(.000001,(b-a)*factor); this.viewRange=[Math.max(0,mid-span/2), Math.max(span,mid+span/2)]; this.follow=false; }
