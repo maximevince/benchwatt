@@ -4,6 +4,6 @@ members = ["crates/otii-arc", "crates/otii-cli", "crates/otii-rec", "crates/otii
 
 [workspace.package]
 edition = "2024"
-license = "MIT"
+license = "GPL-3.0-or-later"
 version = "0.1.0"
 
