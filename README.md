@@ -31,7 +31,7 @@ Qoitech.
 - **Expansion port**: GPO1–2, GPI1–2, the 5 V pin and the I/O voltage.
 - **Files**: save and open `.otii-rec` recordings, export to CSV or to a
   sigrok session (`.sr`) for PulseView.
-- **Automation**: the `otii` command line tool and the `openotii` Python
+- **Automation**: the `openotii` command line tool and the `openotii` Python
   package, both described below.
 
 Tested with an Arc (hardware 1.3, firmware 3.1.3). The Otii Ace and older
@@ -69,25 +69,27 @@ the UI.
 
 ## Command line
 
+![openotii measuring current and checking assertions](docs/cli.gif)
+
 ```sh
 cargo build --release -p otii-cli
-./target/release/otii info
+./target/release/openotii info
 ```
 
 Some examples:
 
 ```sh
-otii power --volt 3.3V --ilim 100mA on
-otii measure --ch mc,mv,mp --duration 10s
-otii record --ch mc,mv,mp --gpi --uart 115200 --duration 30s -o boot.otii-rec
-otii convert boot.otii-rec boot.sr
-otii stats boot.otii-rec --from 2s --to 5s
-otii power off
+openotii power --volt 3.3V --ilim 100mA on
+openotii measure --ch mc,mv,mp --duration 10s
+openotii record --ch mc,mv,mp --gpi --uart 115200 --duration 30s -o boot.otii-rec
+openotii convert boot.otii-rec boot.sr
+openotii stats boot.otii-rec --from 2s --to 5s
+openotii power off
 ```
 
 `mc`, `mv` and `mp` are the Arc's names for main current, voltage and power.
-Values take units (`3.3V`, `50uA`, `100ms`), and `--json` turns every command's
-output into JSON.
+Values take units (`3.3V`, `50uA`, `100ms`). Output is meant for people by
+default; add `--json` to get JSON instead.
 
 ### Power checks in CI
 
@@ -96,12 +98,12 @@ hardware-in-the-loop job can then guard against power regressions with a
 couple of lines:
 
 ```sh
-otii power --volt 3.3V --ilim 100mA on
-otii --json measure --ch mc,mv,mp --duration 10s \
+openotii power --volt 3.3V --ilim 100mA on
+openotii --json measure --ch mc,mv,mp --duration 10s \
   --assert 'mc.mean<50uA' --assert 'mc.max<=200mA' --assert 'charge<0.1mAh' \
   > power.json
 status=$?
-otii power off
+openotii power off
 exit $status
 ```
 
@@ -135,7 +137,7 @@ CLI or Python open in any of the three. Details and a pytest example are in
 |------|--------------|
 | `crates/otii-arc` | Protocol and serial device driver |
 | `crates/otii-rec` | Recording engine, `.otii-rec` format, CSV and sigrok export |
-| `crates/otii-cli` | The `otii` command line tool |
+| `crates/otii-cli` | The `openotii` command line tool |
 | `crates/otii-py` | Python bindings (PyO3) |
 | `app/` | Desktop app: Tauri 2 backend, Svelte 5 frontend |
 | `docs/PROTOCOL.md` | The Arc's v3 protocol as far as we know it |

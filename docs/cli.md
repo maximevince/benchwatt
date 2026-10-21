@@ -1,23 +1,23 @@
-# `otii` command line interface
+# `openotii` command line interface
 
 Build with `cargo build -p otii-cli`; the binary is `target/debug/otii`. Use `--port /dev/ttyACM0` to select an Arc explicitly. Live commands find a matching USB serial port if `--port` is omitted. `convert` and `stats` work entirely offline.
 
 ## Scripting
 
-`--json` prints one JSON object per completed command. `monitor` prints JSON lines as events arrive. Errors go to stderr as `{"error":"..."}`. Exit codes are 0 for success, 1 for a failed measurement assertion, 2 for device or file I/O failure, and 3 for invalid arguments.
+Without `--json`, commands print short human-readable summaries (`measure` and `stats` as a table with PASS/FAIL lines). `--json` prints one JSON object per completed command. `monitor` prints JSON lines as events arrive. Errors go to stderr as `{"error":"..."}`. Exit codes are 0 for success, 1 for a failed measurement assertion, 2 for device or file I/O failure, and 3 for invalid arguments.
 
 Numeric arguments accept SI values: `3.3V`, `3300mV`, `50uA` or `50µA`, `10mA`, `0.5`, `100ms`, `2s`, and `1min`. Bare numbers use the command's base unit (V, A, or seconds). Assertion thresholds also accept `mW`, `mWh`, and `mAh`.
 
 ```sh
-otii --json info
-otii power --volt 3.3V --ilim 200mA --mode limit on
-otii power off
-otii measure --ch mc,mv,mp --duration 10s --assert 'mc.mean<50uA' --assert 'mc.max<=200mA'
-otii record --ch mc,mv,mp --duration 10s -o run.otii-rec
-otii record --ch mc,mv --duration 10s --gpi --uart 115200 -o run.sr
-otii convert run.otii-rec run.csv
-otii convert run.otii-rec run.sr
-otii stats run.otii-rec --from 1s --to 3s
+openotii --json info
+openotii power --volt 3.3V --ilim 200mA --mode limit on
+openotii power off
+openotii measure --ch mc,mv,mp --duration 10s --assert 'mc.mean<50uA' --assert 'mc.max<=200mA'
+openotii record --ch mc,mv,mp --duration 10s -o run.otii-rec
+openotii record --ch mc,mv --duration 10s --gpi --uart 115200 -o run.sr
+openotii convert run.otii-rec run.csv
+openotii convert run.otii-rec run.sr
+openotii stats run.otii-rec --from 1s --to 3s
 ```
 
 `measure` reports mean, min, max, RMS, peak to peak, and integral for each analog channel, plus charge in mAh and energy in joules/mWh with average power in watts. Each assertion has its measured value and pass status in JSON. Ctrl-C stops `measure` and `record` cleanly; `record` writes the samples received so far.
@@ -27,8 +27,8 @@ For a CI power regression check, for example:
 ```yaml
 - name: Check idle current
   run: |
-    otii power --volt 3.3V --ilim 100mA on
-    otii --json measure --ch mc,mv,mp --duration 10s \
+    openotii power --volt 3.3V --ilim 100mA on
+    openotii --json measure --ch mc,mv,mp --duration 10s \
       --assert 'mc.mean<50uA' --assert 'mp.mean<1mW' \
       > power-check.json
 ```
