@@ -191,6 +191,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "benchwatt-gpp"
+version = "0.1.0"
+dependencies = [
+ "benchwatt-device",
+ "serde_json",
+ "serialport",
+]
+
+[[package]]
+name = "benchwatt-ppk2"
+version = "0.1.0"
+dependencies = [
+ "benchwatt-device",
+ "serde_json",
+ "serialport",
+]
+
+[[package]]
 name = "benchwatt-py"
 version = "0.1.0"
 dependencies = [
@@ -216,6 +234,8 @@ name = "benchwatt-session"
 version = "0.1.0"
 dependencies = [
  "benchwatt-device",
+ "benchwatt-gpp",
+ "benchwatt-ppk2",
  "benchwatt-rec",
  "otii-arc",
 ]

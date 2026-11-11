@@ -22,12 +22,24 @@ type Driver = (
     fn() -> Vec<String>,
     fn(&str) -> Result<Box<dyn Device>>,
 );
-const DRIVERS: &[Driver] = &[("arc", arc_ports, arc_open)];
+const DRIVERS: &[Driver] = &[
+    ("arc", arc_ports, arc_open),
+    ("ppk2", benchwatt_ppk2::find, ppk2_open),
+    ("gpp", benchwatt_gpp::find, gpp_open),
+];
 fn arc_ports() -> Vec<String> {
     otii_arc::device::find_port().into_iter().collect()
 }
 fn arc_open(port: &str) -> Result<Box<dyn Device>> {
     Ok(Box::new(otii_arc::ArcDevice::open(port)?))
+}
+
+fn ppk2_open(port: &str) -> Result<Box<dyn Device>> {
+    Ok(Box::new(benchwatt_ppk2::Ppk2::open(port)?))
+}
+
+fn gpp_open(port: &str) -> Result<Box<dyn Device>> {
+    Ok(Box::new(benchwatt_gpp::Gpp::open(port)?))
 }
 
 pub fn find() -> Vec<Found> {
@@ -93,7 +105,11 @@ pub fn meta(dev: &dyn Device) -> file::Meta {
             fw: text(info.firmware),
             hw: text(info.hardware),
             uid: text(info.serial),
-            proto: info.details["protocol"].as_u64().map(|p| p as u32),
+            proto: info
+                .details
+                .get("protocol")
+                .and_then(|p| p.as_u64())
+                .map(|p| p as u32),
         },
         ..file::Meta::default()
     }

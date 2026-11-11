@@ -8,3 +8,5 @@ edition.workspace = true
 benchwatt-device = { path = "../benchwatt-device" }
 benchwatt-rec = { path = "../benchwatt-rec" }
 otii-arc = { path = "../otii-arc" }
+benchwatt-ppk2 = { path = "../benchwatt-ppk2" }
+benchwatt-gpp = { path = "../benchwatt-gpp" }

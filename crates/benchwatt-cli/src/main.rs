@@ -465,7 +465,24 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
     let d = device(&cli)?;
     let d = d.as_ref();
     let value = match cli.command {
-        Command::Info => Value::Object(d.info().details),
+        Command::Info => {
+            // The identity every device has, then whatever else the driver knows.
+            let info = d.info();
+            let mut out = serde_json::Map::new();
+            for (key, value) in [
+                ("kind", info.kind),
+                ("model", info.model),
+                ("serial", info.serial),
+                ("firmware", info.firmware),
+                ("hardware", info.hardware),
+            ] {
+                if !value.is_empty() {
+                    out.insert(key.into(), value.into());
+                }
+            }
+            out.extend(info.details);
+            Value::Object(out)
+        }
         Command::Get { name } => {
             let v = dev(d.get(&name))?;
             json!({"name":name,"value":text(&v)})
