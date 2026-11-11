@@ -64,7 +64,7 @@ pub fn select(device: Option<&str>) -> Result<Found> {
             [one] => Ok(one.clone()),
             [] => Err(Error::new(ErrorKind::Io, "no device found")),
             many => Err(Error::invalid(format!(
-                "several devices found, pick one with --device: {}",
+                "several devices found, name one: {}",
                 many.iter().map(|f| f.kind).collect::<Vec<_>>().join(", ")
             ))),
         };
