@@ -319,3 +319,131 @@ fn tx_uses_newest_packet_time() {
     r.push_tx(&tx, b"after");
     assert_eq!(r.bytes(0x19, 0.0, 1.0).len(), 1);
 }
+/// Statistics over a long range use stored sums; they must agree with adding
+/// up the samples, whatever the range, packet sizes and gaps.
+#[test]
+fn stats_over_long_ranges_match_the_samples() {
+    let mut r = Recording::new(&[spec(0, "x", Kind::Analog, 100_000)]);
+    let mut samples = Vec::new();
+    let mut t = 0.0;
+    let mut seed = 1u32;
+    for packet in 0..300 {
+        let (len, dt) = if packet % 3 == 0 {
+            (70, 1e-5)
+        } else {
+            (33, 2e-5)
+        };
+        if packet == 120 {
+            t += 0.5;
+        }
+        let data: Vec<f32> = (0..len)
+            .map(|_| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (seed >> 8) as f32 / 16_777_216.0 - 0.5
+            })
+            .collect();
+        for (k, &v) in data.iter().enumerate() {
+            samples.push((t + k as f64 * dt, dt, v as f64));
+        }
+        r.push(&Block {
+            ch: 0,
+            t,
+            dt,
+            data: Data::Analog(data),
+        });
+        t += len as f64 * dt;
+    }
+    for (t0, t1) in [
+        (0.0, t),
+        (0.0123, 0.0871),
+        (0.03, 0.7),
+        (0.2, 0.25),
+        (0.6, t),
+    ] {
+        let inside: Vec<_> = samples
+            .iter()
+            .filter(|(at, _, _)| *at >= t0 && *at <= t1)
+            .collect();
+        let Some(s) = r.stats(0, t0, t1) else {
+            assert!(inside.is_empty(), "{t0}..{t1}");
+            continue;
+        };
+        let n = inside.len() as f64;
+        let sum: f64 = inside.iter().map(|x| x.2).sum();
+        let sq: f64 = inside.iter().map(|x| x.2 * x.2).sum();
+        let integral: f64 = inside.iter().map(|x| x.2 * x.1).sum();
+        let min = inside.iter().map(|x| x.2).fold(f64::INFINITY, f64::min);
+        let max = inside.iter().map(|x| x.2).fold(f64::NEG_INFINITY, f64::max);
+        assert_eq!(s.count, inside.len(), "{t0}..{t1}");
+        assert_eq!((s.min, s.max), (min, max), "{t0}..{t1}");
+        assert!((s.mean - sum / n).abs() < 1e-12, "{t0}..{t1}");
+        assert!((s.rms - (sq / n).sqrt()).abs() < 1e-12, "{t0}..{t1}");
+        assert!((s.integral - integral).abs() < 1e-12, "{t0}..{t1}");
+    }
+}
+/// Without a power channel, energy is current times the voltage at that
+/// moment; a voltage sampled far more slowly must give the same answer.
+#[test]
+fn energy_from_a_slow_voltage() {
+    let mut r = Recording::new(&[
+        measured(0, "i", 10_000, Quantity::Current, "out"),
+        measured(1, "v", 100, Quantity::Voltage, "out"),
+    ]);
+    let mut current = Vec::new();
+    for packet in 0..100 {
+        let t = packet as f64 * 0.01;
+        let data: Vec<f32> = (0..100)
+            .map(|k| 0.01 + (packet * 100 + k) as f32 * 1e-6)
+            .collect();
+        for (k, &v) in data.iter().enumerate() {
+            current.push((t + k as f64 * 1e-4, v as f64));
+        }
+        r.push(&Block {
+            ch: 0,
+            t,
+            dt: 1e-4,
+            data: Data::Analog(data),
+        });
+    }
+    // One voltage sample per 10 ms, steady for a while, then stepping, with
+    // nothing between 0.50 and 0.60 s.
+    let mut voltage = Vec::new();
+    for n in (0..50).chain(60..100) {
+        let v = if n < 30 {
+            1.8f32
+        } else {
+            1.8 + n as f32 * 0.01
+        };
+        voltage.push((n as f64 * 0.01, v as f64));
+        r.push(&Block {
+            ch: 1,
+            t: n as f64 * 0.01,
+            dt: 0.01,
+            data: Data::Analog(vec![v]),
+        });
+    }
+    // Ranges end between samples, so rounding cannot move a sample across an end.
+    for (t0, t1) in [
+        (0.0, 1.0),
+        (0.12345, 0.77777),
+        (0.45005, 0.65005),
+        (0.52005, 0.58005),
+    ] {
+        let mut joules = 0.0;
+        let mut any = false;
+        for &(t, i) in current.iter().filter(|(t, _)| *t >= t0 && *t <= t1) {
+            if let Some(&(_, v)) = voltage.iter().rfind(|(at, _)| *at <= t && t < *at + 0.01) {
+                joules += i * v * 1e-4;
+                any = true;
+            }
+        }
+        match r.energy(t0, t1) {
+            Some(e) => assert!(
+                (e.joules - joules).abs() < 1e-9,
+                "{t0}..{t1}: {} vs {joules}",
+                e.joules
+            ),
+            None => assert!(!any, "{t0}..{t1}"),
+        }
+    }
+}

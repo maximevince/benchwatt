@@ -61,10 +61,52 @@ struct Bucket {
     min: f32,
     max: f32,
 }
+/// What statistics need from a run of samples.
+#[derive(Clone, Copy)]
+struct Sum {
+    min: f64,
+    max: f64,
+    sum: f64,
+    sq: f64,
+    integral: f64,
+}
+impl Default for Sum {
+    fn default() -> Self {
+        Self {
+            min: f64::INFINITY,
+            max: f64::NEG_INFINITY,
+            sum: 0.0,
+            sq: 0.0,
+            integral: 0.0,
+        }
+    }
+}
+impl Sum {
+    fn sample(&mut self, v: f64, dt: f64) {
+        self.min = self.min.min(v);
+        self.max = self.max.max(v);
+        self.sum += v;
+        self.sq += v * v;
+        self.integral += v * dt;
+    }
+    fn merge(&mut self, o: &Sum) {
+        self.min = self.min.min(o.min);
+        self.max = self.max.max(o.max);
+        self.sum += o.sum;
+        self.sq += o.sq;
+        self.integral += o.integral;
+    }
+}
+/// Samples per stored `Sum`. Statistics over a range read whole blocks and
+/// only the samples at its two ends, so their cost does not grow with the range.
+const SUM_BLOCK: usize = 1024;
 #[derive(Default)]
 struct Analog {
     chunks: Vec<Vec<f32>>,
     len: usize,
+    /// One per complete `SUM_BLOCK` samples, in order.
+    sums: Vec<Sum>,
+    partial: Sum,
     packets: Vec<Packet>,
     levels: Vec<Vec<Bucket>>,
     pending: Vec<Vec<Bucket>>,
@@ -152,6 +194,10 @@ impl Analog {
             }
             self.chunks.last_mut().unwrap().push(x);
             self.len += 1;
+            self.partial.sample(x as f64, dt);
+            if self.len.is_multiple_of(SUM_BLOCK) {
+                self.sums.push(std::mem::take(&mut self.partial));
+            }
             self.add(
                 0,
                 Bucket {
@@ -162,6 +208,43 @@ impl Analog {
                 },
             )
         }
+    }
+    /// The samples `lo..hi` one by one.
+    fn scan(&self, lo: usize, hi: usize, into: &mut Sum) {
+        if lo >= hi {
+            return;
+        }
+        let mut packet = self.packets.partition_point(|p| p.first <= lo) - 1;
+        for i in lo..hi {
+            if i >= self.packets[packet].first + self.packets[packet].len {
+                packet += 1;
+            }
+            into.sample(self.value(i) as f64, self.packets[packet].dt);
+        }
+    }
+    fn sum(&self, lo: usize, hi: usize) -> Sum {
+        let mut total = Sum::default();
+        let first = lo.div_ceil(SUM_BLOCK);
+        let last = hi / SUM_BLOCK;
+        if first >= last {
+            self.scan(lo, hi, &mut total);
+            return total;
+        }
+        self.scan(lo, first * SUM_BLOCK, &mut total);
+        for block in &self.sums[first..last] {
+            total.merge(block);
+        }
+        self.scan(last * SUM_BLOCK, hi, &mut total);
+        total
+    }
+    /// Index of the first sample at or after `t`.
+    fn first_from(&self, t: f64) -> usize {
+        let n = self
+            .packets
+            .partition_point(|p| p.t + (p.len as f64 - 1.0) * p.dt < t);
+        self.packets.get(n).map_or(self.len, |p| {
+            p.first + (((t - p.t) / p.dt).ceil().max(0.0) as usize).min(p.len)
+        })
     }
     fn bounds(&self, t0: f64, t1: f64) -> (usize, usize) {
         let s = self
@@ -476,28 +559,15 @@ impl Recording {
         if lo == hi {
             return None;
         }
-        let (mut min, mut max, mut sum, mut sq, mut integral) =
-            (f64::INFINITY, f64::NEG_INFINITY, 0.0, 0.0, 0.0);
-        let mut packet = a.packets.partition_point(|p| p.first <= lo) - 1;
-        for i in lo..hi {
-            if i >= a.packets[packet].first + a.packets[packet].len {
-                packet += 1;
-            }
-            let v = a.value(i) as f64;
-            min = min.min(v);
-            max = max.max(v);
-            sum += v;
-            sq += v * v;
-            integral += v * a.packets[packet].dt
-        }
+        let total = a.sum(lo, hi);
         let count = hi - lo;
         Some(Stats {
             count,
-            min,
-            max,
-            mean: sum / count as f64,
-            rms: (sq / count as f64).sqrt(),
-            integral,
+            min: total.min,
+            max: total.max,
+            mean: total.sum / count as f64,
+            rms: (total.sq / count as f64).sqrt(),
+            integral: total.integral,
         })
     }
     /// The channel measuring `q` in the group of the lowest-id grouped channel.
@@ -524,6 +594,58 @@ impl Recording {
             let (lo, hi) = mc.bounds(t0, t1);
             let mut j = 0.0;
             let mut found = false;
+            // A voltage that changes rarely (a setpoint, a slow reading) is
+            // taken a stretch at a time: its value times the charge that
+            // flowed meanwhile. That keeps a long range cheap.
+            if mv.len * 8 < mc.len {
+                let mut stretch: Option<(f64, f64, f64)> = None;
+                let mut close = |s: Option<(f64, f64, f64)>| {
+                    if let Some((v, from, to)) = s {
+                        let (a, b) = (mc.first_from(from).max(lo), mc.first_from(to).min(hi));
+                        if a < b {
+                            j += v * mc.sum(a, b).integral;
+                            found = true;
+                        }
+                    }
+                };
+                let first = mv
+                    .packets
+                    .partition_point(|p| p.t + p.len as f64 * p.dt <= t0);
+                for p in &mv.packets[first..] {
+                    if p.t > t1 {
+                        break;
+                    }
+                    for k in 0..p.len {
+                        let (from, v) = (p.t + k as f64 * p.dt, mv.value(p.first + k) as f64);
+                        let to = from + p.dt;
+                        let joined = stretch
+                            .as_ref()
+                            .is_some_and(|(_, _, end)| from <= *end + p.dt * 1e-6);
+                        match &mut stretch {
+                            Some((value, _, end)) if joined && *value == v => *end = to,
+                            _ => {
+                                // The next stretch starts where this one ends, to the
+                                // last bit, so no sample is counted twice.
+                                if let Some((_, _, end)) = &mut stretch
+                                    && joined
+                                {
+                                    *end = from;
+                                }
+                                close(stretch.replace((v, from, to)))
+                            }
+                        }
+                    }
+                }
+                close(stretch);
+                if !found {
+                    return None;
+                }
+                return Some(Energy {
+                    joules: j,
+                    mwh: j / 3.6,
+                    average_power: j / (t1 - t0).max(f64::EPSILON),
+                });
+            }
             // Both channels run forward in time, so one cursor per channel
             // replaces a search per sample.
             let mut cp = mc.packets.partition_point(|p| p.first <= lo).max(1) - 1;
