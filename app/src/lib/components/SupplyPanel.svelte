@@ -7,7 +7,7 @@
   import Readout from './Readout.svelte';
   import SetpointInput from './SetpointInput.svelte';
   import SettingField from './SettingField.svelte';
-  import { currentField, outputReadouts, readingKind, voltageField } from '$lib/channels';
+  import { currentField, outputColor, outputReadouts, readingKind, voltageField } from '$lib/channels';
   // One output of a device: its readouts, switch, setpoints and the settings that belong to it.
   let { device, index }: { device: Device; index: number } = $props();
   const output = $derived(device.desc.outputs[index]);
@@ -16,9 +16,13 @@
   const volts = $derived(voltageField(output.voltage));
   const limit = $derived(output.current_limit && currentField(output.current_limit));
   const steps = $derived(output.voltage_steps.map(String));
+  const color = $derived(outputColor(output.color));
+  // The output's name stands out when the device marks it with a colour or has several to tell apart.
+  const tagged = $derived(!!color || device.desc.outputs.length > 1);
 </script>
-<section class="sidebar-section supply" class:output-on={state?.enabled} aria-label={'Supply ' + output.label}>
-  <div class="section-heading"><h2>Supply</h2><span class="section-meta">{output.label.toUpperCase()}</span></div>
+<section class="sidebar-section supply" class:output-on={state?.enabled} class:marked={!!color} style:--output={color && 'var(--' + color + ')'} aria-label={'Supply ' + output.label}>
+  {#if tagged}<div class="section-heading supply-heading"><span class="output-chip output-badge" class:marked={!!color}>{output.label}</span><h2>Supply</h2></div>
+  {:else}<div class="section-heading"><h2>Supply</h2><span class="section-meta">{output.label.toUpperCase()}</span></div>{/if}
   <div class="hero-readouts" class:dimmed={!device.state}>
     {#each outputReadouts(device.desc, output) as ch (ch.name)}<Readout label={ch.quantity.toUpperCase()} value={readings[ch.name] ?? null} kind={readingKind(ch.quantity) ?? 'voltage'} set={ch.set} />{/each}
   </div>

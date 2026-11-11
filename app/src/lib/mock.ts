@@ -50,7 +50,7 @@ function arc(id: string): Sim {
   let spike = 0;
   return {
     desc: { id, kind: 'arc', model: 'Arc', serial: '5120A83D42', firmware: '3.1.3', hardware: '1.0', channels, settings, gpo: 2, uart: true,
-      outputs: [{ n: 1, label: 'Main output', group: 'main', voltage: { min: 0, max: 3.76 }, voltage_steps: [], current_limit: { min: 0.001, max: 3 } }] },
+      outputs: [{ n: 1, label: 'Main output', group: 'main', voltage: { min: 0, max: 3.76 }, voltage_steps: [], current_limit: { min: 0.001, max: 3 }, color: null }] },
     state: { outputs: [{ enabled: false, voltage: 3.3, current_limit: 0.3 }], settings: { current_mode: 'cutoff', io_voltage: 1.9, '5v_pin': false, '4wire': false }, gpo: [false, false], uart_open: false },
     phase: 0,
     monitor(sim) {
@@ -81,8 +81,8 @@ function arc(id: string): Sim {
 
 function gpp(id: string): Sim {
   nextId = 0;
-  const limits = [[32, 3], [32, 3], [5, 1], [15, 1]], loads = [50, 100, 10, 200];
-  const outputs: OutputDesc[] = limits.map(([volts, amps], i) => ({ n: i + 1, label: `CH${i + 1}`, group: `ch${i + 1}`, voltage: { min: 0, max: volts }, voltage_steps: [], current_limit: { min: 0, max: amps } }));
+  const limits = [[32, 3], [32, 3], [5, 1], [15, 1]], loads = [50, 100, 10, 200], colors = ['yellow', 'cyan', 'magenta', 'green'];
+  const outputs: OutputDesc[] = limits.map(([volts, amps], i) => ({ n: i + 1, label: `CH${i + 1}`, group: `ch${i + 1}`, voltage: { min: 0, max: volts }, voltage_steps: [], current_limit: { min: 0, max: amps }, color: colors[i] }));
   const channels = outputs.flatMap(out => (['v', 'i', 'p'] as const).map(q => channel(`${out.group}.${q}`, `${out.label} ${q === 'v' ? 'voltage' : q === 'i' ? 'current' : 'power'}`, q === 'v' ? 'V' : q === 'i' ? 'A' : 'W', 'Analog', q === 'v' ? 'Voltage' : q === 'i' ? 'Current' : 'Power', 10, { group: out.group })));
   const settings: SettingDesc[] = outputs.flatMap(out => [
     { key: `ovp${out.n}`, label: 'OVP', type: 'number' as const, min: 0, max: out.voltage.max + 1, unit: 'V', output: out.n, readonly: false },
@@ -122,7 +122,7 @@ function ppk2(id: string): Sim {
   const current = (sim: Sim, t: number) => sim.state.settings.mode === 'ampere' || sim.state.outputs[0].enabled ? (awake(t, 0.5, 0.01) ? 0.015 : 0.000003) * setpoints(sim, 0).voltage / 3 : 0;
   return {
     desc: { id, kind: 'ppk2', model: 'PPK2', serial: 'C2A1F7E5', firmware: '1.2.1', hardware: '2', channels, gpo: 0, uart: false,
-      outputs: [{ n: 1, label: 'Source', group: 'out', voltage: { min: 0.8, max: 5 }, voltage_steps: [], current_limit: null }],
+      outputs: [{ n: 1, label: 'Source', group: 'out', voltage: { min: 0.8, max: 5 }, voltage_steps: [], current_limit: null, color: null }],
       settings: [{ key: 'mode', label: 'Mode', type: 'choice', options: ['source', 'ampere'], output: null, readonly: false }] },
     state: { outputs: [{ enabled: false, voltage: null, current_limit: null }], settings: { mode: 'source' }, gpo: [], uart_open: false },
     phase: 0,

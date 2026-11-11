@@ -8,7 +8,7 @@ export type { View } from './view';
 export type Quantity = 'Current' | 'Voltage' | 'Power' | 'Temperature' | 'Other';
 export type ChannelDesc = { id: number; name: string; label: string; unit: string; rate_hz: number; kind: 'Analog' | 'Digital' | 'Bytes'; quantity: Quantity; group: string; bits: number; extra: boolean; set: boolean };
 export type Range = { min: number; max: number };
-export type OutputDesc = { n: number; label: string; group: string; voltage: Range; voltage_steps: number[]; current_limit: Range | null };
+export type OutputDesc = { n: number; label: string; group: string; voltage: Range; voltage_steps: number[]; current_limit: Range | null; color: string | null };
 export type SettingValue = boolean | string | number;
 export type SettingDesc = { key: string; label: string; type: 'bool' | 'choice' | 'number'; options?: string[]; min?: number; max?: number; unit?: string; output: number | null; readonly: boolean };
 export type DeviceDesc = { id: string; kind: string; model: string; serial: string; firmware: string; hardware: string; channels: ChannelDesc[]; outputs: OutputDesc[]; settings: SettingDesc[]; gpo: number; uart: boolean };

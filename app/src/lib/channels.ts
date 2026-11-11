@@ -7,14 +7,32 @@ export function readingKind(quantity: Quantity): ReadingKind | null {
   return quantity === 'Current' ? 'current' : quantity === 'Voltage' ? 'voltage' : quantity === 'Power' ? 'power' : null;
 }
 
-/** Lane colour token per channel name. The first current/voltage/power of a list gets its quantity's colour,
+const OUTPUT_COLORS = ['yellow', 'cyan', 'magenta', 'green', 'blue', 'red', 'orange'];
+/** Colour token (a CSS variable name) of an output's front-panel marking, or null for none or a colour we have no shade for. */
+export function outputColor(name: string | null | undefined): string | null {
+  return name && OUTPUT_COLORS.includes(name) ? 'output-' + name : null;
+}
+
+/** The output a channel belongs to, as a chip: shown when the output has a colour or the device has several outputs.
+ * `rest` is the channel label without the output's name ("CH2 current" → "current"). */
+export type OutputTag = { label: string; color: string | null; rest: string };
+export function outputTag(outputs: OutputDesc[], ch: ChannelDesc): OutputTag | null {
+  const out = outputs.find(o => o.group === ch.group), color = outputColor(out?.color);
+  if (!out || (outputs.length < 2 && !color)) return null;
+  const prefix = out.label + ' ';
+  return { label: out.label, color, rest: ch.label.startsWith(prefix) ? ch.label.slice(prefix.length) : ch.label };
+}
+
+/** Lane colour token per channel name. A channel of a coloured output takes the output's colour, like on the device.
+ * Otherwise the first current/voltage/power of a list gets its quantity's colour,
  * the second current or voltage its secondary colour so two of them stay distinguishable, any others the aux colour. */
-export function channelColors(channels: ChannelDesc[]): Record<string, string> {
+export function channelColors(channels: ChannelDesc[], outputs: OutputDesc[] = []): Record<string, string> {
   const secondary: Record<string, string | undefined> = { current: 'teal', voltage: 'cyan' }, seen = new Set<string>(), colors: Record<string, string> = {};
   for (const ch of channels) {
-    const kind = readingKind(ch.quantity);
+    const kind = readingKind(ch.quantity), marked = outputColor(outputs.find(o => o.group === ch.group)?.color);
     if (ch.kind === 'Digital') colors[ch.name] = 'digital';
     else if (ch.kind === 'Bytes') colors[ch.name] = 'uart';
+    else if (marked) colors[ch.name] = marked;
     else if (!kind) colors[ch.name] = 'aux';
     else if (!seen.has(kind)) { seen.add(kind); colors[ch.name] = kind; }
     else { colors[ch.name] = secondary[kind] ?? 'aux'; secondary[kind] = undefined; }
@@ -36,7 +54,7 @@ export function formatStatus(value: number | null | undefined, ch: ChannelDesc):
   return (value.toFixed(ch.quantity === 'Temperature' ? 1 : 2) + ' ' + ch.unit).trim();
 }
 
-export type Lane = { key: string; label: string; unit: string; color: string; kind: 'analog' | 'digital' | 'uart'; channel: ChannelDesc; bit: number };
+export type Lane = { key: string; label: string; unit: string; color: string; kind: 'analog' | 'digital' | 'uart'; channel: ChannelDesc; bit: number; output: OutputTag | null };
 export const UART_LANE = '#uart';
 
 /** Labels joined with a shared leading word kept once: "UART RX", "UART TX" → "UART RX / TX". */
@@ -49,12 +67,12 @@ export function joinLabels(labels: string[]): string {
 }
 
 /** Plot lanes in description order: one per analog channel, one per digital bit, one for all byte channels. */
-export function lanesFor(channels: ChannelDesc[]): Lane[] {
-  const colors = channelColors(channels), bytes = channels.filter(ch => ch.kind === 'Bytes'), lanes: Lane[] = [];
+export function lanesFor(channels: ChannelDesc[], outputs: OutputDesc[] = []): Lane[] {
+  const colors = channelColors(channels, outputs), bytes = channels.filter(ch => ch.kind === 'Bytes'), lanes: Lane[] = [];
   for (const ch of channels) {
-    if (ch.kind === 'Analog') lanes.push({ key: ch.name, label: ch.label, unit: ch.unit, color: colors[ch.name], kind: 'analog', channel: ch, bit: 0 });
-    else if (ch.kind === 'Digital') for (let i = 1; i <= ch.bits; i++) lanes.push({ key: `${ch.name}#${i}`, label: `${ch.label} ${i}`, unit: '', color: 'digital', kind: 'digital', channel: ch, bit: i - 1 });
-    else if (ch === bytes[0]) lanes.push({ key: UART_LANE, label: joinLabels(bytes.map(b => b.label)), unit: '', color: 'uart', kind: 'uart', channel: ch, bit: 0 });
+    if (ch.kind === 'Analog') lanes.push({ key: ch.name, label: ch.label, unit: ch.unit, color: colors[ch.name], kind: 'analog', channel: ch, bit: 0, output: outputTag(outputs, ch) });
+    else if (ch.kind === 'Digital') for (let i = 1; i <= ch.bits; i++) lanes.push({ key: `${ch.name}#${i}`, label: `${ch.label} ${i}`, unit: '', color: 'digital', kind: 'digital', channel: ch, bit: i - 1, output: null });
+    else if (ch === bytes[0]) lanes.push({ key: UART_LANE, label: joinLabels(bytes.map(b => b.label)), unit: '', color: 'uart', kind: 'uart', channel: ch, bit: 0, output: null });
   }
   return lanes;
 }

@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ChannelDesc, DeviceDesc, SettingDesc } from './backend';
-import { channelColors, currentField, defaultRecordChannels, formatStatus, formatValue, joinLabels, lanesFor, numberField, orderedEntries, outputReadouts, rxChannel, settingError, statusChannels, voltageField, UART_LANE } from './channels';
+import { channelColors, currentField, outputColor, outputTag, defaultRecordChannels, formatStatus, formatValue, joinLabels, lanesFor, numberField, orderedEntries, outputReadouts, rxChannel, settingError, statusChannels, voltageField, UART_LANE } from './channels';
 
 let id = 0;
 const ch = (name: string, quantity: ChannelDesc['quantity'], extra: Partial<ChannelDesc> = {}): ChannelDesc =>
   ({ id: id++, name, label: name.toUpperCase(), unit: quantity === 'Current' ? 'A' : quantity === 'Voltage' ? 'V' : quantity === 'Power' ? 'W' : quantity === 'Temperature' ? '°C' : '', rate_hz: 1000, kind: 'Analog', quantity, group: '', bits: 0, extra: false, set: false, ...extra });
 const device = (channels: ChannelDesc[], outputs: DeviceDesc['outputs'] = []): DeviceDesc =>
   ({ id: 'x', kind: 'x', model: 'X', serial: '', firmware: '', hardware: '', channels, outputs, settings: [], gpo: 0, uart: false });
-const output = (n: number, group: string) => ({ n, label: `Out ${n}`, group, voltage: { min: 0, max: 5 }, voltage_steps: [], current_limit: null });
+const output = (n: number, group: string, color: string | null = null) => ({ n, label: `Out ${n}`, group, voltage: { min: 0, max: 5 }, voltage_steps: [], current_limit: null, color });
 
 // A meter/supply shaped like a typical bench instrument with one output, extra channels, digital inputs and a UART.
 const meter = [
@@ -24,6 +24,27 @@ describe('lane colours', () => {
     expect(channelColors([meter[2], meter[3]])).toEqual({ i2: 'current', v2: 'voltage' });
     expect(channelColors([ch('a', 'Current'), ch('b', 'Current'), ch('c', 'Current')])).toEqual({ a: 'current', b: 'teal', c: 'aux' });
     expect(channelColors([ch('v', 'Voltage'), ch('v2', 'Voltage'), ch('i', 'Current'), ch('i2', 'Current')])).toEqual({ v: 'voltage', v2: 'cyan', i: 'current', i2: 'teal' });
+  });
+});
+
+describe('output colours', () => {
+  const a = ch('a.i', 'Current', { group: 'a', label: 'Out 1 current' }), b = ch('b.v', 'Voltage', { group: 'b', label: 'Out 2 voltage' }), free = ch('t', 'Temperature');
+  it('maps known colour names to a token and anything else to null', () => {
+    expect(outputColor('cyan')).toBe('output-cyan');
+    expect(outputColor('teal')).toBeNull();
+    expect(outputColor(null)).toBeNull();
+  });
+  it('tags channels with their output when it has a colour or the device has several outputs', () => {
+    const marked = [output(1, 'a', 'yellow'), output(2, 'b', 'chartreuse')];
+    expect(outputTag(marked, a)).toEqual({ label: 'Out 1', color: 'output-yellow', rest: 'current' });
+    expect(outputTag(marked, b)).toEqual({ label: 'Out 2', color: null, rest: 'voltage' });
+    expect(outputTag(marked, free)).toBeNull();
+    expect(outputTag([output(1, 'a')], a)).toBeNull();
+    expect(outputTag([output(1, 'a', 'green')], a)?.color).toBe('output-green');
+  });
+  it('draws channels of a coloured output in its colour and the rest by quantity', () => {
+    expect(channelColors([a, b, ch('v', 'Voltage')], [output(1, 'a', 'magenta'), output(2, 'b')])).toEqual({ 'a.i': 'output-magenta', 'b.v': 'voltage', v: 'cyan' });
+    expect(lanesFor([a], [output(1, 'a', 'green'), output(2, 'b')])[0]).toMatchObject({ color: 'output-green', output: { label: 'Out 1', rest: 'current' } });
   });
 });
 

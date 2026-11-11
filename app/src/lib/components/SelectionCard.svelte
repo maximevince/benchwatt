@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { AllStats } from '$lib/backend';
   import type { ChannelDesc } from '$lib/backend';
-  import { orderedEntries, channelColors, formatValue } from '$lib/channels';
+  import { orderedEntries, channelColors, formatValue, outputTag } from '$lib/channels';
+  import ChannelName from './ChannelName.svelte';
   import { formatReading } from '$lib/format';
   import { app } from '$lib/stores.svelte';
   import { Copy, ChevronDown, ChevronUp, X } from 'lucide-svelte';
@@ -13,7 +14,7 @@
   const end = $derived((range[1] - viewRange[0]) / (viewRange[1] - viewRange[0]) * width);
   const left = $derived(Math.max(4, Math.min(width - cardWidth - 4, end + 8 + cardWidth <= width ? end + 8 : start - cardWidth - 8)));
   const channels = $derived(app.recording?.channels ?? []);
-  const colors = $derived(channelColors(channels));
+  const colors = $derived(channelColors(channels, app.recordingOutputs));
   const desc = (id: string): ChannelDesc => channels.find(ch => ch.name === id) ?? { id: -1, name: id, label: id, unit: '', rate_hz: 0, kind: 'Analog', quantity: 'Other', group: '', bits: 0, extra: false, set: false };
   const analog = $derived(orderedEntries(stats?.channels ?? {}, channels).filter(([id]) => desc(id).kind === 'Analog'));
   const has = (quantity: ChannelDesc['quantity']) => analog.some(([id]) => desc(id).quantity === quantity);
@@ -32,7 +33,7 @@
   <div class="selection-card-heading"><strong>{duration(range[1] - range[0])}</strong><time>{time(range[0])} – {time(range[1])}</time><div class="selection-card-actions"><button title="Copy selection stats as TSV" aria-label="Copy selection stats" onclick={() => void app.copyStats()}><Copy size={13}/></button><button title={collapsed ? 'Expand measurements' : 'Collapse measurements'} aria-label={collapsed ? 'Expand measurements' : 'Collapse measurements'} onclick={toggle}>{#if collapsed}<ChevronDown size={13}/>{:else}<ChevronUp size={13}/>{/if}</button><button title="Clear selection" aria-label="Clear selection" onclick={() => app.clearSelection()}><X size={13}/></button></div></div>
   {#if !collapsed}<div class="selection-card-body">
     {#if stats}<div class="selection-card-grid"><span></span><span>min</span><span>avg</span><span>max</span><span title="Integral">∫</span>
-      {#each analog as [id, values]}<div class="selection-card-label" title={id}><i class="swatch" data-channel={colors[id] ?? 'aux'}></i>{desc(id).label}</div><code>{reading(values.min, id)}</code><code>{reading(values.mean, id)}</code><code>{reading(values.max, id)}</code><code title={integralTitle(values.integral, id)}>{integral(values.integral, id)}</code>{/each}
+      {#each analog as [id, values]}<div class="selection-card-label" title={id}><ChannelName label={desc(id).label} color={colors[id] ?? 'aux'} output={outputTag(app.recordingOutputs, desc(id))}/></div><code>{reading(values.min, id)}</code><code>{reading(values.mean, id)}</code><code>{reading(values.max, id)}</code><code title={integralTitle(values.integral, id)}>{integral(values.integral, id)}</code>{/each}
     </div>
     {#if stats.energy}<div class="selection-card-footer">{#if !has('Power') && has('Current') && has('Voltage')}<span>Energy</span><code title={(stats.energy.joules * 1000).toFixed(3) + ' mJ'}>{integrated(stats.energy.joules, 'Wh')}</code>{/if}<span>Average power</span><code>{power(stats.energy.average_power)}</code></div>{/if}
     {:else}<p class="selection-card-loading">Calculating…</p>{/if}

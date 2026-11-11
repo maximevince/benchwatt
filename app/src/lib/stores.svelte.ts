@@ -47,8 +47,10 @@ class AppState {
   recording = $state<RecordingInfo | null>(null);
   get recordChannels(): string[] { const d = this.selected; return d ? this.recordChoice[d.desc.id] ?? defaultRecordChannels(d.desc) : []; }
   set recordChannels(channels: string[]) { const d = this.selected; if (d) this.recordChoice = { ...this.recordChoice, [d.desc.id]: channels }; }
+  /** Outputs of the device the recording comes from, while it is connected (their colours and names tag the channels). */
+  recordingOutputs = $derived(this.devices.find(d => d.desc.id === this.recording?.device)?.desc.outputs ?? []);
   /** Plot lanes of the current recording, from its own channel list. */
-  lanes = $derived(lanesFor(this.recording?.channels ?? []));
+  lanes = $derived(lanesFor(this.recording?.channels ?? [], this.recordingOutputs));
   hiddenLanes = $state<string[]>([]);
   range = $state<[number, number] | null>(null);
   viewRange = $state<[number, number]>([0, 10]);
