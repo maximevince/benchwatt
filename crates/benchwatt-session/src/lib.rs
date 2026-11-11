@@ -101,15 +101,11 @@ pub fn meta(dev: &dyn Device) -> file::Meta {
     let text = |s: String| (!s.is_empty()).then_some(s);
     file::Meta {
         device: file::DeviceInfo {
-            name: text(info.model),
-            fw: text(info.firmware),
-            hw: text(info.hardware),
-            uid: text(info.serial),
-            proto: info
-                .details
-                .get("protocol")
-                .and_then(|p| p.as_u64())
-                .map(|p| p as u32),
+            kind: text(info.kind),
+            model: text(info.model),
+            serial: text(info.serial),
+            firmware: text(info.firmware),
+            hardware: text(info.hardware),
         },
         ..file::Meta::default()
     }

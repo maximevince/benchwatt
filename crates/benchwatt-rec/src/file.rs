@@ -8,14 +8,15 @@ use std::{
 };
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
+/// Which device a recording came from, as far as the device could say.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DeviceInfo {
-    pub name: Option<String>,
-    pub fw: Option<String>,
-    pub hw: Option<String>,
-    pub uid: Option<String>,
-    #[serde(default)]
-    pub proto: Option<u32>,
+    pub kind: Option<String>,
+    pub model: Option<String>,
+    pub serial: Option<String>,
+    pub firmware: Option<String>,
+    pub hardware: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChannelMeta {
@@ -65,10 +66,15 @@ fn zip_err(e: zip::result::ZipError) -> io::Error {
 fn options() -> SimpleFileOptions {
     SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)
 }
+/// Channel names become file names in the archive: letters, digits, `_`, `-`
+/// and single dots inside the name (`ch1.v`), nothing that could leave `ch/`.
 fn safe_name(s: &str) -> bool {
     !s.is_empty()
+        && !s.starts_with('.')
+        && !s.ends_with('.')
+        && !s.contains("..")
         && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
 }
 #[derive(Serialize, Deserialize)]
 struct UartIndex {
@@ -255,5 +261,19 @@ impl Recording {
         }
         rec.stop();
         Ok((rec, meta))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_name;
+    #[test]
+    fn channel_names_as_file_names() {
+        for good in ["mc", "ch1.v", "adc-1_x"] {
+            assert!(safe_name(good), "{good}");
+        }
+        for bad in ["", ".v", "v.", "a..b", "../x", "a/b", "a b"] {
+            assert!(!safe_name(bad), "{bad}");
+        }
     }
 }
