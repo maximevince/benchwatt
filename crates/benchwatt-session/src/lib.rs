@@ -26,6 +26,8 @@ const DRIVERS: &[Driver] = &[
     ("arc", arc_ports, arc_open),
     ("ppk2", benchwatt_ppk2::find, ppk2_open),
     ("gpp", benchwatt_gpp::find, gpp_open),
+    #[cfg(feature = "joulescope")]
+    ("joulescope", benchwatt_joulescope::find, joulescope_open),
 ];
 fn arc_ports() -> Vec<String> {
     otii_arc::device::find_port().into_iter().collect()
@@ -40,6 +42,11 @@ fn ppk2_open(port: &str) -> Result<Box<dyn Device>> {
 
 fn gpp_open(port: &str) -> Result<Box<dyn Device>> {
     Ok(Box::new(benchwatt_gpp::Gpp::open(port)?))
+}
+
+#[cfg(feature = "joulescope")]
+fn joulescope_open(device: &str) -> Result<Box<dyn Device>> {
+    Ok(Box::new(benchwatt_joulescope::Joulescope::open(device)?))
 }
 
 pub fn find() -> Vec<Found> {

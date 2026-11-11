@@ -68,3 +68,14 @@ def test_ppk2_voltage_known_once_set():
         ppk2.output = False
         ppk2.set_voltage(1.8)
         assert ppk2.voltage == pytest.approx(1.8)
+
+
+def test_joulescope_streams_at_the_set_rate():
+    need("joulescope")
+    with benchwatt.open("joulescope") as js:
+        js.set("rate", "100kHz")
+        rec = js.record(0.5, channels=["i", "v"])
+    t, v = rec.data("v")
+    assert len(v) == pytest.approx(50_000, rel=0.2)
+    assert t[1] - t[0] == pytest.approx(1e-5)
+    assert rec.gaps == []

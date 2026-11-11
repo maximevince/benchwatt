@@ -12,11 +12,10 @@ desktop app, an account or a license.
 | [Qoitech Otii Arc](https://www.qoitech.com/otii-arc-pro/) | Supply, current/voltage/power at 4 kHz, digital I/O, UART |
 | GW Instek GPP-1326, GPP-2323, GPP-3323, GPP-4323 | Up to four supply outputs with voltage, current and power readings, OVP and OCP |
 | Nordic Power Profiler Kit II | Supply or ampere meter, current at 100 kHz, eight digital inputs |
-
-Support for the Joulescope JS220 is being worked on.
+| [Joulescope JS220](https://www.joulescope.com/products/js220-joulescope-precision-energy-analyzer) | Inline meter: current, voltage and power at 10 Hz to 1 MHz, two digital outputs |
 
 This is an independent project. It isn't affiliated with or supported by
-Qoitech, GW Instek or Nordic Semiconductor.
+Qoitech, GW Instek, Nordic Semiconductor or Jetperch.
 
 ![Benchwatt recording view](docs/screenshot.png)
 
@@ -25,7 +24,8 @@ Qoitech, GW Instek or Nordic Semiconductor.
 - **Power supply**: output on/off, voltage and current limit for every output
   of every connected instrument, plus whatever else the instrument has to set
   (the Arc's cutoff or constant-current limiting, the GPP's OVP and OCP, the
-  PPK2's mode). Alerts such as over-current are shown as they happen.
+  PPK2's mode, the Joulescope's sample rate and current range). Alerts such as
+  over-current are shown as they happen.
 - **Several instruments at once**: the app shows every supported instrument
   that is plugged in and lets you switch between them. Outputs are shown in the
   colours of the front panel where there are any, so CH2 of a GPP-4323 is cyan
@@ -49,8 +49,8 @@ Qoitech, GW Instek or Nordic Semiconductor.
 
 A recording comes from one instrument at a time for now.
 
-Tested with an Arc (hardware 1.3, firmware 3.1.3), a GPP-4323 (firmware V1.16)
-and a PPK2. The other GPP models are driven from their manuals and have not
+Tested with an Arc (hardware 1.3, firmware 3.1.3), a GPP-4323 (firmware V1.16),
+a PPK2 and a JS220 (firmware 1.3.0). The other GPP models are driven from their manuals and have not
 been on our bench. The Otii Ace and older Arc firmware are not supported; if
 your Arc still runs firmware 1.x, update it with the Otii app first.
 
@@ -58,13 +58,30 @@ your Arc still runs firmware 1.x, update it with the Otii app first.
 
 You need Rust (stable), Node.js 22 or newer, and the
 [Tauri prerequisites for Linux](https://v2.tauri.app/start/prerequisites/#linux)
-(webkit2gtk and friends).
+(webkit2gtk and friends). The Joulescope support builds Jetperch's driver from
+source, which takes CMake, a C compiler, clang (for the bindings) and the
+libudev headers (`libudev-dev` on Debian/Ubuntu; part of `systemd-libs` on
+Arch). The driver is a git submodule:
+
+```sh
+git clone --recurse-submodules https://github.com/maximevince/benchwatt.git
+# or, in a clone you already have:
+git submodule update --init
+```
 
 Your user needs access to the instruments' serial ports. On most distributions that
 means being in the `uucp` or `dialout` group:
 
 ```sh
 sudo usermod -aG uucp $USER   # or dialout on Debian/Ubuntu; log in again afterwards
+```
+
+The Joulescope is not a serial port. It needs the udev rule that comes with
+its driver:
+
+```sh
+sudo cp crates/jsdrv-sys/joulescope_driver/72-joulescope.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules   # then plug the Joulescope in again
 ```
 
 Build the interface once, then run the app:
@@ -100,8 +117,8 @@ cargo build --release -p benchwatt-cli
 ```
 
 `devices` lists what is plugged in. With one instrument connected every
-command uses it; with several, name one with `--device arc`, `--device gpp` or
-`--device ppk2`.
+command uses it; with several, name one with `--device arc`, `--device gpp`,
+`--device ppk2` or `--device joulescope`.
 
 Some examples with an Arc:
 
@@ -133,6 +150,14 @@ output off as soon as a command ends:
 
 ```sh
 benchwatt --device ppk2 measure --ch i --duration 5s --volt 1.8V --on --settle 1s
+```
+
+A Joulescope sits in the supply line of the target and can interrupt it. Its
+current range decides: `off` opens the line, `auto` or a fixed range closes it.
+
+```sh
+benchwatt --device joulescope set range auto
+benchwatt --device joulescope measure --ch i,v,p --duration 5s
 ```
 
 ### Power checks in CI
@@ -189,6 +214,8 @@ CLI or Python open in any of the three. Details and a pytest example are in
 | `crates/otii-arc` | The Arc's protocol and serial driver, and its adapter to those traits |
 | `crates/benchwatt-gpp` | Driver for the GW Instek GPP supplies (SCPI over the USB serial port) |
 | `crates/benchwatt-ppk2` | Driver for the Nordic PPK2 |
+| `crates/benchwatt-joulescope` | Driver for the Joulescope JS220, on top of the vendor's driver |
+| `crates/jsdrv-sys` | Builds Jetperch's `joulescope_driver` (a submodule) and declares its C interface |
 | `crates/benchwatt-rec` | Recording engine, `.bwrec` format, CSV and sigrok export |
 | `crates/benchwatt-session` | Opens devices and runs captures into a recording |
 | `crates/benchwatt-cli` | The `benchwatt` command line tool |
@@ -214,6 +241,15 @@ The GPP supplies speak SCPI as described in GW Instek's manual. The PPK2
 driver is written from the published facts about its serial protocol; it
 contains no code from Nordic's application or from other PPK2 libraries.
 
+The Joulescope is driven through Jetperch's own
+[joulescope_driver](https://github.com/jetperch/joulescope_driver)
+(Apache-2.0), which is linked into the program together with the libusb
+(LGPL-2.1-or-later), miniz (MIT) and tinyprintf (BSD-3-Clause) it bundles.
+Their licence texts are in `crates/jsdrv-sys/joulescope_driver/LICENSES`.
+`crates/jsdrv-sys/patches` holds the fixes we build it with. To build without
+it, and without CMake, turn off the `joulescope` feature of
+`benchwatt-session`.
+
 A few settings the Arc stores in calibration are never written by this code.
 Even so, this is unofficial software driving power supplies: double-check
 voltage and current limits before you connect something you care about.
@@ -229,7 +265,8 @@ cd app && npm run check && npx vitest run
 Hardware tests are skipped unless you opt in, and each one is skipped when its
 instrument isn't plugged in. The Arc tests expect a 100 Ω load on the main
 output and the expansion port wired TX→RX and GPO1→GPI1. The GPP and PPK2
-tests only set a voltage with the output off:
+tests only set a voltage with the output off, and the Joulescope test only
+measures:
 
 ```sh
 BENCHWATT_HW=1 pytest crates/benchwatt-py/tests/hw

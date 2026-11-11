@@ -4,7 +4,13 @@ version.workspace = true
 license.workspace = true
 edition.workspace = true
 
+[features]
+default = ["joulescope"]
+# Needs CMake, a C compiler and libudev to build the vendor's driver.
+joulescope = ["dep:benchwatt-joulescope"]
+
 [dependencies]
+benchwatt-joulescope = { path = "../benchwatt-joulescope", optional = true }
 benchwatt-device = { path = "../benchwatt-device" }
 benchwatt-rec = { path = "../benchwatt-rec" }
 otii-arc = { path = "../otii-arc" }
