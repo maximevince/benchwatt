@@ -23,9 +23,6 @@ struct Cli {
     /// Which device: its kind, or `kind@port` when it cannot be found by USB id.
     #[arg(short, long, global = true)]
     device: Option<String>,
-    /// Serial port of the Arc; the same as `--device arc@PORT`.
-    #[arg(short, long, global = true)]
-    port: Option<String>,
     #[arg(long, global = true)]
     json: bool,
     #[command(subcommand)]
@@ -43,25 +40,17 @@ enum Command {
         name: String,
         value: String,
     },
-    On,
-    Off,
-    Volt {
-        v: String,
-    },
-    Ilim {
-        a: String,
-    },
     Monitor,
+    /// Set a supply output, or show the outputs when given nothing to set.
     Power {
         #[arg(long)]
         volt: Option<String>,
         #[arg(long)]
         ilim: Option<String>,
+        /// Which output; needed when the supply has more than one.
         #[arg(long)]
-        mode: Option<String>,
-        /// Which output, on a supply with several.
-        #[arg(long, default_value_t = 1)]
-        out: u8,
+        out: Option<u8>,
+        /// `on` or `off`.
         state: Option<String>,
     },
     Measure {
@@ -222,10 +211,7 @@ fn parse_bool(s: &str) -> Result<bool> {
     }
 }
 fn device(cli: &Cli) -> Result<Box<dyn Device>> {
-    let by_port = cli.port.as_ref().map(|p| format!("arc@{p}"));
-    let found = dev(benchwatt_session::select(
-        cli.device.as_deref().or(by_port.as_deref()),
-    ))?;
+    let found = dev(benchwatt_session::select(cli.device.as_deref()))?;
     dev(benchwatt_session::open(&found))
 }
 fn dev<T>(r: benchwatt_session::device::Result<T>) -> Result<T> {
@@ -237,6 +223,24 @@ fn dev<T>(r: benchwatt_session::device::Result<T>) -> Result<T> {
 fn supply(d: &dyn Device) -> Result<&dyn Supply> {
     d.supply()
         .ok_or_else(|| Failure::usage("device has no supply output"))
+}
+/// The output a command acts on: the one named, or the only one there is.
+fn output(supply: &dyn Supply, out: Option<u8>) -> Result<u8> {
+    let outputs = supply.outputs();
+    match (out, outputs.as_slice()) {
+        (Some(n), _) => Ok(n),
+        (None, [only]) => Ok(only.n),
+        (None, all) => {
+            let labels: Vec<_> = all
+                .iter()
+                .map(|o| format!("{} ({})", o.n, o.label))
+                .collect();
+            Err(Failure::usage(format!(
+                "this supply has several outputs, pick one with --out: {}",
+                labels.join(", ")
+            )))
+        }
+    }
 }
 fn gpio(d: &dyn Device) -> Result<&dyn Gpio> {
     d.gpio()
@@ -355,12 +359,6 @@ fn check_assertions(rec: &Recording, items: &[String]) -> Result<(Value, bool)> 
 }
 fn validate_live(command: &Command) -> Result<()> {
     match command {
-        Command::Volt { v } => {
-            value_unit(v, "V")?;
-        }
-        Command::Ilim { a } => {
-            value_unit(a, "A")?;
-        }
         Command::Power {
             volt, ilim, state, ..
         } => {
@@ -411,10 +409,7 @@ fn validate_live(command: &Command) -> Result<()> {
             }
             check_extension(output)?;
         }
-        Command::Gpo { n, state } => {
-            if !(1..=2).contains(n) {
-                return Err(Failure::usage("GPO must be 1 or 2"));
-            }
+        Command::Gpo { state, .. } => {
             parse_bool(state)?;
         }
         _ => {}
@@ -498,49 +493,43 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
             dev(d.set(&name, v.clone()))?;
             json!({"name":name,"value":text(&v)})
         }
-        Command::On => {
-            dev(supply(d)?.set_enabled(1, true))?;
-            json!({"output":true})
-        }
-        Command::Off => {
-            dev(supply(d)?.set_enabled(1, false))?;
-            json!({"output":false})
-        }
-        Command::Volt { v } => {
-            let n = value_unit(&v, "V")?;
-            dev(supply(d)?.set_voltage(1, n))?;
-            json!({"voltage_V":n})
-        }
-        Command::Ilim { a } => {
-            let n = value_unit(&a, "A")?;
-            dev(supply(d)?.set_current_limit(1, n))?;
-            json!({"current_limit_A":n})
-        }
         Command::Power {
             volt,
             ilim,
-            mode,
             out,
             state,
         } => {
+            let supply = supply(d)?;
+            if volt.is_none() && ilim.is_none() && state.is_none() {
+                let mut list = Vec::new();
+                for o in supply.outputs() {
+                    if out.is_some_and(|n| n != o.n) {
+                        continue;
+                    }
+                    let s = dev(supply.state(o.n))?;
+                    list.push(json!({"out":o.n,"label":o.label,"output":s.enabled,
+                        "voltage_V":s.voltage,"current_limit_A":s.current_limit}));
+                }
+                if list.is_empty() {
+                    return Err(Failure::usage("no such output"));
+                }
+                return Ok((json!({"outputs":list}), 0));
+            }
+            let out = output(supply, out)?;
             let mut applied = serde_json::Map::new();
             if let Some(v) = volt {
                 let n = value_unit(&v, "V")?;
-                dev(supply(d)?.set_voltage(out, n))?;
+                dev(supply.set_voltage(out, n))?;
                 applied.insert("voltage_V".into(), json!(n));
             }
             if let Some(a) = ilim {
                 let n = value_unit(&a, "A")?;
-                dev(supply(d)?.set_current_limit(out, n))?;
+                dev(supply.set_current_limit(out, n))?;
                 applied.insert("current_limit_A".into(), json!(n));
-            }
-            if let Some(m) = mode {
-                dev(d.set("current_mode", json!(m)))?;
-                applied.insert("mode".into(), json!(m));
             }
             if let Some(s) = state {
                 let on = parse_bool(&s)?;
-                dev(supply(d)?.set_enabled(out, on))?;
+                dev(supply.set_enabled(out, on))?;
                 applied.insert("output".into(), json!(on));
             }
             Value::Object(applied)
@@ -666,7 +655,6 @@ mod tests {
         rec.save(&native, &Meta::default()).unwrap();
         let (converted, code) = run(Cli {
             device: None,
-            port: None,
             json: true,
             command: Command::Convert {
                 input: native.to_str().unwrap().into(),
@@ -678,7 +666,6 @@ mod tests {
         assert_eq!(converted["samples"]["mc"], rec.sample_counts()["mc"]);
         let (stats, code) = run(Cli {
             device: None,
-            port: None,
             json: true,
             command: Command::Stats {
                 input: native.to_str().unwrap().into(),

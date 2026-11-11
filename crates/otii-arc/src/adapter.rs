@@ -440,10 +440,11 @@ impl Gpio for ArcDevice {
         self.gpo.lock().unwrap().to_vec()
     }
     fn set_output(&self, n: u8, on: bool) -> Result<()> {
-        self.arc.set_gpo(n, on)?;
-        if let Some(level) = self.gpo.lock().unwrap().get_mut(usize::from(n) - 1) {
-            *level = Some(on);
+        if !(1..=2).contains(&n) {
+            return Err(Error::invalid("GPO must be 1 or 2"));
         }
+        self.arc.set_gpo(n, on)?;
+        self.gpo.lock().unwrap()[usize::from(n) - 1] = Some(on);
         Ok(())
     }
 }

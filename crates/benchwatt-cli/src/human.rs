@@ -63,13 +63,24 @@ pub fn render_with(v: &Value, color: bool) -> String {
     if let Some(n) = v["gpo"].as_u64() {
         return format!("gpo{n} {}", v["state"].as_str().unwrap_or_default());
     }
-    if let Some(map) = v.as_object()
-        && map.keys().all(|k| {
-            matches!(
-                k.as_str(),
-                "voltage_V" | "current_limit_A" | "mode" | "output"
+    if let Some(list) = v["outputs"].as_array() {
+        let line = |o: &Value| {
+            let value = |key: &str, unit| o[key].as_f64().map_or("—".into(), |x| si(x, unit));
+            format!(
+                "{:<3}{:<13}{:<5}{:>10}  limit {}",
+                o["out"].to_string(),
+                o["label"].as_str().unwrap_or_default(),
+                if o["output"] == true { "on" } else { "off" },
+                value("voltage_V", "V"),
+                value("current_limit_A", "A"),
             )
-        })
+        };
+        return list.iter().map(line).collect::<Vec<_>>().join("\n");
+    }
+    if let Some(map) = v.as_object()
+        && map
+            .keys()
+            .all(|k| matches!(k.as_str(), "voltage_V" | "current_limit_A" | "output"))
     {
         return supply(v);
     }
@@ -87,9 +98,6 @@ fn supply(v: &Value) -> String {
     }
     if let Some(x) = v["current_limit_A"].as_f64() {
         parts.push(format!("current limit {}", si(x, "A")));
-    }
-    if let Some(m) = v["mode"].as_str() {
-        parts.push(format!("mode {m}"));
     }
     if let Some(o) = v["output"].as_bool() {
         parts.push(format!("output {}", if o { "on" } else { "off" }));

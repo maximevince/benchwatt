@@ -1,6 +1,8 @@
 # `benchwatt` command line interface
 
-Build with `cargo build -p benchwatt-cli`; the binary is `target/debug/benchwatt`. `benchwatt devices` lists the supported devices that are plugged in. Live commands use the one that is connected; with several, pick one by kind with `--device arc`. A device that cannot be found by its USB id is named with its port, `--device arc@/dev/ttyACM0` (`--port /dev/ttyACM0` is the short form for an Arc). On a supply with several outputs, `power --out N` picks the output. `convert` and `stats` work entirely offline.
+Build with `cargo build -p benchwatt-cli`; the binary is `target/debug/benchwatt`. `benchwatt devices` lists the supported devices that are plugged in. Live commands use the one that is connected; with several, pick one by kind with `--device arc`. A device that cannot be found by its USB id is named with its port, `--device arc@/dev/ttyACM0`.
+
+`power` sets a supply output: `--volt`, `--ilim`, and `on` or `off`. On a supply with several outputs it needs `--out N`; with a single output that one is used. Without anything to set, `power` lists the outputs with their state and setpoints. Settings that only some devices have, such as the Arc's current mode, go through `get` and `set`. `convert` and `stats` work entirely offline.
 
 ## Scripting
 
@@ -10,7 +12,10 @@ Numeric arguments accept SI values: `3.3V`, `3300mV`, `50uA` or `50µA`, `10mA`,
 
 ```sh
 benchwatt --json info
-benchwatt power --volt 3.3V --ilim 200mA --mode limit on
+benchwatt power --volt 3.3V --ilim 200mA on
+benchwatt set current_mode limit
+benchwatt --device gpp power --out 2 --volt 5V --ilim 500mA on
+benchwatt --device gpp power
 benchwatt power off
 benchwatt measure --ch mc,mv,mp --duration 10s --assert 'mc.mean<50uA' --assert 'mc.max<=200mA'
 benchwatt record --ch mc,mv,mp --duration 10s -o run.bwrec
