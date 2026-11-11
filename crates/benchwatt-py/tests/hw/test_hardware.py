@@ -1,12 +1,12 @@
 import os
 import pytest
-import openotii
+import benchwatt
 
-pytestmark = pytest.mark.skipif(os.getenv("OPENOTII_HW") != "1", reason="requires OPENOTII_HW=1")
+pytestmark = pytest.mark.skipif(os.getenv("BENCHWATT_HW") != "1", reason="requires BENCHWATT_HW=1")
 
 
 def test_100_ohm_load():
-    with openotii.Arc() as arc:
+    with benchwatt.Arc() as arc:
         arc.set_current_limit(0.1)
         arc.set_voltage(1.8)
         arc.output = True
@@ -18,21 +18,21 @@ def test_100_ohm_load():
 
 
 def test_uart_loopback():
-    with openotii.Arc() as arc:
+    with benchwatt.Arc() as arc:
         arc.uart_open(115200)
         try:
             arc.start_recording(["rx"])
-            arc.uart_write(b"openotii-loopback\n")
+            arc.uart_write(b"benchwatt-loopback\n")
             import time
             time.sleep(0.5)
             rec = arc.stop_recording()
-            assert b"openotii-loopback\n" in b"".join(data for _, data in rec.uart())
+            assert b"benchwatt-loopback\n" in b"".join(data for _, data in rec.uart())
         finally:
             arc.uart_close()
 
 
 def test_gpo1_to_gpi1():
-    with openotii.Arc() as arc:
+    with benchwatt.Arc() as arc:
         arc.start_recording([], gpi=True)
         arc.set_gpo(1, True)
         import time

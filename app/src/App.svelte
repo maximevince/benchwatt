@@ -58,7 +58,7 @@
   }
 
 </script>
-<svelte:head><title>{app.fileName ? `${app.fileName} · ` : ''}OpenOtii</title></svelte:head>
+<svelte:head><title>{app.fileName ? `${app.fileName} · ` : ''}Benchwatt</title></svelte:head>
 <svelte:window onkeydown={shortcut}/>
 <TooltipProvider>
   <div class="app-shell">
@@ -84,12 +84,12 @@
     </PaneGroup>
     <Dialog open={app.dialog !== null} onOpenChange={open => { if (!open) app.resolveDialog(false); }}>
       <DialogContent showCloseButton={app.dialog !== 'discard'}>
-        <DialogHeader><DialogTitle>{app.dialog === 'discard' ? 'Discard unsaved recording?' : app.dialog === 'export' ? 'Export recording' : app.dialog === 'device' ? 'Device info' : app.dialog === 'about' ? 'About OpenOtii' : 'Keyboard shortcuts'}</DialogTitle>
+        <DialogHeader><DialogTitle>{app.dialog === 'discard' ? 'Discard unsaved recording?' : app.dialog === 'export' ? 'Export recording' : app.dialog === 'device' ? 'Device info' : app.dialog === 'about' ? 'About Benchwatt' : 'Keyboard shortcuts'}</DialogTitle>
         <DialogDescription>{app.dialog === 'discard' ? 'The current recording has unsaved changes.' : app.dialog === 'export' ? 'Choose the portion to export.' : ''}</DialogDescription></DialogHeader>
         {#if app.dialog === 'discard'}<DialogFooter><Button variant="outline" onclick={() => app.resolveDialog(false)}>Cancel</Button><Button onclick={() => app.resolveDialog(true)}>Discard</Button></DialogFooter>
         {:else if app.dialog === 'export'}<DialogFooter><Button variant="outline" onclick={() => { app.dialog=null; void app.exportRecording(app.exportFormat); }}>Whole recording</Button><Button onclick={() => { app.dialog=null; void app.exportRecording(app.exportFormat,true); }}>Selection</Button></DialogFooter>
         {:else if app.dialog === 'device'}<dl class="info-list"><dt>Name</dt><dd>{app.connection.info?.name ?? '—'}</dd><dt>Firmware</dt><dd>{app.connection.info?.fw ?? '—'}</dd><dt>Hardware</dt><dd>{app.connection.info?.hw ?? '—'}</dd><dt>UID</dt><dd>{app.connection.info?.uid ?? '—'}</dd><dt>Protocol</dt><dd>{app.connection.info?.proto ?? '—'}</dd></dl>
-        {:else if app.dialog === 'about'}<p>OpenOtii 0.1.0</p>
+        {:else if app.dialog === 'about'}<p>Benchwatt 0.1.0</p>
         {:else if app.dialog === 'shortcuts'}<dl class="info-list">{#each [['Open recording','Ctrl+O'],['Save recording','Ctrl+S'],['Quit','Ctrl+Q'],['Select all','Ctrl+A'],['Clear selection','Esc'],['Copy selection stats','Ctrl+Shift+C'],['Zoom to fit','F'],['Zoom in','+ / ='],['Zoom out','−'],['Toggle bottom panel','Ctrl+J'],['Output on/off','Ctrl+E / Space'],['Start/stop recording','R'],['Keyboard shortcuts','?']] as [label, key]}<dt>{label}</dt><dd><kbd>{key}</kbd></dd>{/each}</dl>{/if}
       </DialogContent>
     </Dialog>

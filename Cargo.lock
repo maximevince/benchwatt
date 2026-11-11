@@ -160,6 +160,51 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
+name = "benchwatt-app"
+version = "0.1.0"
+dependencies = [
+ "benchwatt-rec",
+ "otii-arc",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+]
+
+[[package]]
+name = "benchwatt-cli"
+version = "0.1.0"
+dependencies = [
+ "benchwatt-rec",
+ "clap",
+ "ctrlc",
+ "otii-arc",
+ "serde_json",
+]
+
+[[package]]
+name = "benchwatt-py"
+version = "0.1.0"
+dependencies = [
+ "benchwatt-rec",
+ "numpy",
+ "otii-arc",
+ "pyo3",
+]
+
+[[package]]
+name = "benchwatt-rec"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "otii-arc",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2358,19 +2403,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "openotii-app"
-version = "0.1.0"
-dependencies = [
- "otii-arc",
- "otii-rec",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
-]
-
-[[package]]
 name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2384,38 +2416,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serialport",
-]
-
-[[package]]
-name = "otii-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "ctrlc",
- "otii-arc",
- "otii-rec",
- "serde_json",
-]
-
-[[package]]
-name = "otii-py"
-version = "0.1.0"
-dependencies = [
- "numpy",
- "otii-arc",
- "otii-rec",
- "pyo3",
-]
-
-[[package]]
-name = "otii-rec"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "otii-arc",
- "serde",
- "serde_json",
- "zip",
 ]
 
 [[package]]

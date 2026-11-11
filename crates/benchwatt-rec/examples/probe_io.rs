@@ -35,7 +35,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (n, on) in [(1, true), (2, true), (1, false), (2, false)] {
         arc.set_gpo(n, on)?;
         let (gpi, ..) = drain(&events, 400);
-        println!("gpo{n}={on}: gpiocfg {:?}, monitor gpi {gpi:?}", gpiocfg(&arc));
+        println!(
+            "gpo{n}={on}: gpiocfg {:?}, monitor gpi {gpi:?}",
+            gpiocfg(&arc)
+        );
     }
 
     println!("== A: record [mc], open UART mid-recording");
@@ -50,7 +53,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("== B: rx selected, UART not opened");
     arc.start_recording(&[0x00, 0x17])?;
-    arc.uart_write(b"hello B\n").map_err(|e| println!("write: {e}")).ok();
+    arc.uart_write(b"hello B\n")
+        .map_err(|e| println!("write: {e}"))
+        .ok();
     let (_, _, rx) = drain(&events, 600);
     println!("rx {:?}", String::from_utf8_lossy(&rx));
     arc.stop_recording()?;

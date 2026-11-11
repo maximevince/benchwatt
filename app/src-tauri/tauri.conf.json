@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OpenOtii",
+  "productName": "Benchwatt",
   "version": "0.1.0",
-  "identifier": "dev.openotii.app",
+  "identifier": "dev.benchwatt.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "OpenOtii", "width": 1160, "height": 800, "minWidth": 1100, "minHeight": 700 }],
+    "windows": [{ "title": "Benchwatt", "width": 1160, "height": 800, "minWidth": 1100, "minHeight": 700 }],
     "security": { "csp": null }
   },
   "bundle": {

@@ -1,10 +1,10 @@
 """Python bindings for Otii Arc recordings and device control."""
-from ._openotii import Arc, Recording, DeviceError, TimeoutError, AlertError
+from ._benchwatt import Arc, Recording, DeviceError, TimeoutError, AlertError
 
 __all__ = ["Arc", "Recording", "DeviceError", "TimeoutError", "AlertError"]
 
 try:
-    from ._openotii import _testing
+    from ._benchwatt import _testing
 except ImportError:
     pass
 else:

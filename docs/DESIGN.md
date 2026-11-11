@@ -1,4 +1,4 @@
-# OpenOtii UI design direction
+# Benchwatt UI design direction
 
 Inspiration: Saleae Logic 2 (calm neutral chrome, the *data* carries the color) and the
 shadcn/ui aesthetic (zinc greys, 1px borders, small radii, crisp type). Instrument software:
@@ -42,7 +42,7 @@ Color only where it means something:
 ## Layout (single window, min 1100×700)
 ```
 ┌ top bar ─────────────────────────────────────────────────────────────────┐
-│ ◉ OpenOtii   [● Arc · fw 3.1.3 · 5120…]      [● REC 00:12]  [☾]  [⋯]    │
+│ ◉ Benchwatt   [● Arc · fw 3.1.3 · 5120…]      [● REC 00:12]  [☾]  [⋯]    │
 ├──────────────┬───────────────────────────────────────────────────────────┤
 │ SUPPLY       │                                                           │
 │  3.2974 V    │                 timeline / plot area                      │

@@ -1,13 +1,13 @@
 mod human;
 
+use benchwatt_rec::{
+    ChannelSpec, Kind, Recording, export,
+    file::{DeviceInfo, Meta},
+};
 use clap::{Parser, Subcommand};
 use otii_arc::{
     Arc, Event,
     prop::{self, PropertyValue, ValueKind},
-};
-use otii_rec::{
-    ChannelSpec, Kind, Recording, export,
-    file::{DeviceInfo, Meta},
 };
 use serde_json::{Value, json};
 use std::{
@@ -21,7 +21,7 @@ use std::{
 };
 
 #[derive(Parser)]
-#[command(name = "openotii", version)]
+#[command(name = "benchwatt", version)]
 struct Cli {
     #[arg(short, long, global = true)]
     port: Option<String>,
@@ -789,7 +789,8 @@ mod tests {
                 _ => {}
             }
         }
-        let base = std::env::temp_dir().join(format!("otii-cli-fixture-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("benchwatt-cli-fixture-{}", std::process::id()));
         let native = base.with_extension("otii-rec");
         let csv = base.with_extension("csv");
         rec.save(&native, &Meta::default()).unwrap();

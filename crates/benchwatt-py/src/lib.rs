@@ -1,6 +1,6 @@
+use benchwatt_rec::{ChannelSpec, Kind, Recording as NativeRecording, export, file::Meta};
 use numpy::PyArray1;
 use otii_arc::{Arc as Device, Event, PropertyValue, prop};
-use otii_rec::{ChannelSpec, Kind, Recording as NativeRecording, export, file::Meta};
 use pyo3::{
     create_exception,
     exceptions::{PyException, PyTimeoutError, PyValueError},
@@ -15,9 +15,9 @@ use std::{
 
 type SampleArrays<'py> = (Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f32>>);
 
-create_exception!(_openotii, DeviceError, PyException);
-create_exception!(_openotii, TimeoutError, PyTimeoutError);
-create_exception!(_openotii, AlertError, PyException);
+create_exception!(_benchwatt, DeviceError, PyException);
+create_exception!(_benchwatt, TimeoutError, PyTimeoutError);
+create_exception!(_benchwatt, AlertError, PyException);
 
 fn device_error(e: otii_arc::Error) -> PyErr {
     match e {
@@ -85,7 +85,7 @@ fn specs(dev: &Device, names: &[String], gpi: bool, uart: bool) -> PyResult<Vec<
         .collect())
 }
 
-#[pyclass(name = "Recording", module = "openotii")]
+#[pyclass(name = "Recording", module = "benchwatt")]
 struct PyRecording {
     rec: NativeRecording,
     meta: Meta,
@@ -220,7 +220,7 @@ impl PyRecording {
     }
 }
 
-#[pyclass(name = "Arc", module = "openotii")]
+#[pyclass(name = "Arc", module = "benchwatt")]
 struct PyArc {
     dev: Option<Device>,
     rx: Mutex<Receiver<Event>>,
@@ -545,7 +545,7 @@ fn recording_from_fixture(path: &str) -> PyResult<PyRecording> {
 }
 
 #[pymodule]
-fn _openotii(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _benchwatt(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyArc>()?;
     m.add_class::<PyRecording>()?;
     m.add("DeviceError", m.py().get_type::<DeviceError>())?;

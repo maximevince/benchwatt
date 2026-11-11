@@ -32,6 +32,6 @@
   </MenubarContent></MenubarMenu>
   <MenubarMenu><MenubarTrigger>Help</MenubarTrigger><MenubarContent>
     <MenubarItem onclick={() => app.showShortcuts()}>Keyboard shortcuts<MenubarShortcut>?</MenubarShortcut></MenubarItem>
-    <MenubarItem onclick={() => app.dialog='about'}>About OpenOtii</MenubarItem>
+    <MenubarItem onclick={() => app.dialog='about'}>About Benchwatt</MenubarItem>
   </MenubarContent></MenubarMenu>
 </Menubar>

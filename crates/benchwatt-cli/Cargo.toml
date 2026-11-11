@@ -1,11 +1,11 @@
 [package]
-name = "otii-cli"
+name = "benchwatt-cli"
 version.workspace = true
 license.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "openotii"
+name = "benchwatt"
 path = "src/main.rs"
 
 [dependencies]
@@ -13,5 +13,5 @@ clap = { version = "4.5", features = ["derive"] }
 otii-arc = { path = "../otii-arc" }
 
 ctrlc = "3"
-otii-rec = { path = "../otii-rec" }
+benchwatt-rec = { path = "../benchwatt-rec" }
 serde_json = "1"

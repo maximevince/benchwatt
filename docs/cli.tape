@@ -1,9 +1,9 @@
 # Renders docs/cli.gif with https://github.com/charmbracelet/vhs.
-# Needs an Arc on USB and a release build: cargo build --release -p otii-cli
+# Needs an Arc on USB and a release build: cargo build --release -p benchwatt-cli
 # Run from the repository root: vhs docs/cli.tape
 
 Output docs/cli.gif
-Require openotii
+Require benchwatt
 
 Set Shell bash
 Set FontFamily "JetBrains Mono"
@@ -19,17 +19,17 @@ Type "export PATH=$PWD/target/release:$PATH PS1='\[\e[2m\]$\[\e[0m\] ' && clear"
 Enter
 Show
 
-Type "openotii info"
+Type "benchwatt info"
 Sleep 300ms
 Enter
 Sleep 2s
 
-Type "openotii power --volt 1.8V --ilim 50mA on"
+Type "benchwatt power --volt 1.8V --ilim 50mA on"
 Sleep 300ms
 Enter
 Sleep 1.5s
 
-Type "openotii measure --ch mc,mv,mp --duration 3s --assert 'mc.mean<20mA'"
+Type "benchwatt measure --ch mc,mv,mp --duration 3s --assert 'mc.mean<20mA'"
 Sleep 300ms
 Enter
 Sleep 4.5s
@@ -38,7 +38,7 @@ Enter
 Sleep 2s
 
 Ctrl+L
-Type "openotii measure --ch mc --duration 1s --assert 'mc.mean<10mA'"
+Type "benchwatt measure --ch mc --duration 1s --assert 'mc.mean<10mA'"
 Sleep 300ms
 Enter
 Sleep 2.5s
@@ -46,7 +46,7 @@ Type "echo $?"
 Enter
 Sleep 1.5s
 
-Type "openotii power off"
+Type "benchwatt power off"
 Sleep 300ms
 Enter
 Sleep 3s

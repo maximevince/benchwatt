@@ -1,7 +1,7 @@
 //! Hardware smoke test: record from a real Arc into a `Recording` and print what came out.
 //! Expects a ~100 Ω load on the main output and TX→RX, GPO1→GPI1 loopbacks.
+use benchwatt_rec::{ChannelSpec, Kind, Recording, View};
 use otii_arc::{Arc, Event, device::find_port, prop};
-use otii_rec::{ChannelSpec, Kind, Recording, View};
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

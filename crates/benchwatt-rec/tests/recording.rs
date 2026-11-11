@@ -1,6 +1,6 @@
+use benchwatt_rec::{ChannelSpec, Kind, Recording, View};
 use otii_arc::msg::{self, Block, BlockBody, Message};
 use otii_arc::prop::ChannelTable;
-use otii_rec::{ChannelSpec, Kind, Recording, View};
 fn spec(id: u16, name: &str, kind: Kind, rate: u32) -> ChannelSpec {
     ChannelSpec {
         id,

@@ -7,7 +7,7 @@ import { describeAlert } from './alerts';
 import { channel } from './channels';
 
 // File dialogs open in the folder used last (per machine), else ~/Documents.
-const LAST_DIR_KEY = 'openotii.lastDir';
+const LAST_DIR_KEY = 'benchwatt.lastDir';
 async function inLastDir(name: string): Promise<string> {
   let dir: string | null = null;
   try { dir = localStorage.getItem(LAST_DIR_KEY); } catch { /* storage unavailable */ }
@@ -56,14 +56,14 @@ class AppState {
   get darkTheme() { return this.theme === 'dark' || (this.theme === 'system' && this.systemDark); }
   get disabled() { return !this.connection.connected || this.busy; }
   initTheme() {
-    const saved = localStorage.getItem('openotii-theme');
+    const saved = localStorage.getItem('benchwatt-theme');
     this.theme = saved === 'light' || saved === 'dark' ? saved : 'system';
     this.systemDark = matchMedia('(prefers-color-scheme: dark)').matches;
     this.applyTheme();
   }
   showShortcuts() { this.dialog = 'shortcuts'; }
   toggleTheme() { this.setTheme(this.darkTheme ? 'light' : 'dark'); }
-  setTheme(theme: 'system' | 'light' | 'dark') { this.theme = theme; localStorage.setItem('openotii-theme', theme); this.applyTheme(); }
+  setTheme(theme: 'system' | 'light' | 'dark') { this.theme = theme; localStorage.setItem('benchwatt-theme', theme); this.applyTheme(); }
   private applyTheme() { document.documentElement.classList.toggle('dark', this.darkTheme); }
   async start(): Promise<() => void> {
     this.initTheme();
@@ -125,13 +125,13 @@ class AppState {
   private mock() { return !('__TAURI_INTERNALS__' in window); }
   async saveRecording() {
     if (!this.recording) return;
-    try { const path = this.mock() ? 'mock.otii-rec' : await save({ defaultPath: await inLastDir(this.fileName || 'recording.otii-rec'), filters: [{ name: 'OpenOtii recording', extensions: ['otii-rec'] }] });
+    try { const path = this.mock() ? 'mock.otii-rec' : await save({ defaultPath: await inLastDir(this.fileName || 'recording.otii-rec'), filters: [{ name: 'Benchwatt recording', extensions: ['otii-rec'] }] });
       if (!path) return; rememberDir(path); await backend.saveRecording(path); this.fileName = path.split(/[\\/]/).pop() ?? path; this.unsaved = false; toast.success(this.mock() ? 'Mock recording saved' : 'Recording saved');
     } catch (cause) { this.report(cause); }
   }
   async openRecording() {
     if (!await this.confirmDiscard()) return;
-    try { const path = this.mock() ? 'mock.otii-rec' : await open({ multiple: false, defaultPath: await inLastDir(''), filters: [{ name: 'OpenOtii recording', extensions: ['otii-rec'] }] });
+    try { const path = this.mock() ? 'mock.otii-rec' : await open({ multiple: false, defaultPath: await inLastDir(''), filters: [{ name: 'Benchwatt recording', extensions: ['otii-rec'] }] });
       if (typeof path !== 'string') return; rememberDir(path); this.recording = await backend.loadRecording(path); this.fileName = path.split(/[\\/]/).pop() ?? path; this.unsaved = false; this.hiddenLanes = []; this.range = null; this.uart = []; this.edges = []; this.viewRange = [0, Math.max(this.recording.duration_s, .001)]; await this.refreshDetails();
     } catch (cause) { this.report(cause); }
   }

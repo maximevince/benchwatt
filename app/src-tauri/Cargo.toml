@@ -1,5 +1,5 @@
 [package]
-name = "openotii-app"
+name = "benchwatt-app"
 version.workspace = true
 license.workspace = true
 edition.workspace = true
@@ -9,7 +9,7 @@ tauri-build = { version = "2.5", features = [] }
 
 [dependencies]
 otii-arc = { path = "../../crates/otii-arc" }
-otii-rec = { path = "../../crates/otii-rec" }
+benchwatt-rec = { path = "../../crates/benchwatt-rec" }
 tauri = { version = "2.10", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -199,7 +199,7 @@ export const mockBackend: Backend = {
     recording = { ...recording, channels: [...new Set([...recording.channels, 'tx'])], samples: { ...recording.samples, tx: (recording.samples.tx ?? 0) + bytes.length } };
     window.setTimeout(() => {
       if (!recording?.active) return;
-      // The Arc splits the echo over 1 ms packets; otii-rec joins them back into one chunk.
+      // The Arc splits the echo over 1 ms packets; benchwatt-rec joins them back into one chunk.
       uartLog.push({ t: t + .001, dir: 'rx', bytes });
       recording = { ...recording, samples: { ...recording.samples, rx: (recording.samples.rx ?? 0) + bytes.length } };
       emit('recording', recording);

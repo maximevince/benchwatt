@@ -1,4 +1,4 @@
-# OpenOtii
+# Benchwatt
 
 An open-source desktop app, command line tool and Python package for the
 [Qoitech Otii Arc](https://www.qoitech.com/otii-arc-pro/) power analyzer, on
@@ -12,7 +12,7 @@ measurements in CI.
 This is an independent project. It isn't affiliated with or supported by
 Qoitech.
 
-![OpenOtii recording view](docs/screenshot.png)
+![Benchwatt recording view](docs/screenshot.png)
 
 ## What works
 
@@ -31,7 +31,7 @@ Qoitech.
 - **Expansion port**: GPO1–2, GPI1–2, the 5 V pin and the I/O voltage.
 - **Files**: save and open `.otii-rec` recordings, export to CSV or to a
   sigrok session (`.sr`) for PulseView.
-- **Automation**: the `openotii` command line tool and the `openotii` Python
+- **Automation**: the `benchwatt` command line tool and the `benchwatt` Python
   package, both described below.
 
 Tested with an Arc (hardware 1.3, firmware 3.1.3). The Otii Ace and older
@@ -69,22 +69,22 @@ the UI.
 
 ## Command line
 
-![openotii measuring current and checking assertions](docs/cli.gif)
+![benchwatt measuring current and checking assertions](docs/cli.gif)
 
 ```sh
-cargo build --release -p otii-cli
-./target/release/openotii info
+cargo build --release -p benchwatt-cli
+./target/release/benchwatt info
 ```
 
 Some examples:
 
 ```sh
-openotii power --volt 3.3V --ilim 100mA on
-openotii measure --ch mc,mv,mp --duration 10s
-openotii record --ch mc,mv,mp --gpi --uart 115200 --duration 30s -o boot.otii-rec
-openotii convert boot.otii-rec boot.sr
-openotii stats boot.otii-rec --from 2s --to 5s
-openotii power off
+benchwatt power --volt 3.3V --ilim 100mA on
+benchwatt measure --ch mc,mv,mp --duration 10s
+benchwatt record --ch mc,mv,mp --gpi --uart 115200 --duration 30s -o boot.otii-rec
+benchwatt convert boot.otii-rec boot.sr
+benchwatt stats boot.otii-rec --from 2s --to 5s
+benchwatt power off
 ```
 
 `mc`, `mv` and `mp` are the Arc's names for main current, voltage and power.
@@ -98,12 +98,12 @@ hardware-in-the-loop job can then guard against power regressions with a
 couple of lines:
 
 ```sh
-openotii power --volt 3.3V --ilim 100mA on
-openotii --json measure --ch mc,mv,mp --duration 10s \
+benchwatt power --volt 3.3V --ilim 100mA on
+benchwatt --json measure --ch mc,mv,mp --duration 10s \
   --assert 'mc.mean<50uA' --assert 'mc.max<=200mA' --assert 'charge<0.1mAh' \
   > power.json
 status=$?
-openotii power off
+benchwatt power off
 exit $status
 ```
 
@@ -113,9 +113,9 @@ Exit codes are 0 (pass), 1 (an assertion failed), 2 (device or file error) and
 ## Python
 
 ```python
-import openotii
+import benchwatt
 
-with openotii.Arc() as arc:
+with benchwatt.Arc() as arc:
     arc.set_voltage(1.8)
     arc.set_current_limit(0.05)
     arc.output = True
@@ -127,7 +127,7 @@ t, i = rec.data("mc")             # NumPy arrays
 rec.save("run.otii-rec")
 ```
 
-Build it with maturin from `crates/otii-py`. Recordings saved by the app, the
+Build it with maturin from `crates/benchwatt-py`. Recordings saved by the app, the
 CLI or Python open in any of the three. Details and a pytest example are in
 [docs/python.md](docs/python.md).
 
@@ -136,9 +136,9 @@ CLI or Python open in any of the three. Details and a pytest example are in
 | Path | What's in it |
 |------|--------------|
 | `crates/otii-arc` | Protocol and serial device driver |
-| `crates/otii-rec` | Recording engine, `.otii-rec` format, CSV and sigrok export |
-| `crates/otii-cli` | The `openotii` command line tool |
-| `crates/otii-py` | Python bindings (PyO3) |
+| `crates/benchwatt-rec` | Recording engine, `.otii-rec` format, CSV and sigrok export |
+| `crates/benchwatt-cli` | The `benchwatt` command line tool |
+| `crates/benchwatt-py` | Python bindings (PyO3) |
 | `app/` | Desktop app: Tauri 2 backend, Svelte 5 frontend |
 | `docs/PROTOCOL.md` | The Arc's v3 protocol as far as we know it |
 | `fixtures/` | Captured device traffic used in tests |
@@ -167,13 +167,13 @@ Hardware tests are skipped unless you opt in. They expect a 100 Ω load on the
 main output and the expansion port wired TX→RX and GPO1→GPI1:
 
 ```sh
-OPENOTII_HW=1 pytest crates/otii-py/tests/hw
-cargo run -p otii-rec --example live
+BENCHWATT_HW=1 pytest crates/benchwatt-py/tests/hw
+cargo run -p benchwatt-rec --example live
 ```
 
 ## License
 
-OpenOtii is free software: you can redistribute it and/or modify it under the
+Benchwatt is free software: you can redistribute it and/or modify it under the
 terms of the GNU General Public License as published by the Free Software
 Foundation, either version 3 of the License, or (at your option) any later
 version. See [LICENSE](LICENSE).

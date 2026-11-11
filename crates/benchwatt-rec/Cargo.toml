@@ -1,5 +1,5 @@
 [package]
-name = "otii-rec"
+name = "benchwatt-rec"
 version.workspace = true
 license.workspace = true
 edition.workspace = true

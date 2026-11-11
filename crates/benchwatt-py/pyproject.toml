@@ -3,7 +3,7 @@ requires = ["maturin>=1.9,<2"]
 build-backend = "maturin"
 
 [project]
-name = "openotii"
+name = "benchwatt"
 version = "0.1.0"
 requires-python = ">=3.10"
 license = "GPL-3.0-or-later"
@@ -11,4 +11,4 @@ dependencies = ["numpy>=1.24"]
 
 [tool.maturin]
 python-source = "python"
-module-name = "openotii._openotii"
+module-name = "benchwatt._benchwatt"

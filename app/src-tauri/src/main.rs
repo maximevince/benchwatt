@@ -1,6 +1,6 @@
+use benchwatt_rec::{ChannelSpec, Kind, Recording, View, export, file};
 use otii_arc::prop::{CHANNELS, channel_by_name};
 use otii_arc::{Arc as OtiiArc, Error, Event, PropertyValue, device::find_port};
-use otii_rec::{ChannelSpec, Kind, Recording, View, export, file};
 use serde::Serialize;
 use std::{
     sync::{
@@ -212,7 +212,9 @@ fn set_current_mode(state: tauri::State<'_, DeviceState>, mode: String) -> Resul
 #[tauri::command]
 fn set_exp_voltage(state: tauri::State<'_, DeviceState>, volts: f64) -> Result<Settings, Error> {
     if !volts.is_finite() || !(1.2..=5.0).contains(&volts) {
-        return Err(Error::Property("digital voltage must be between 1.2 and 5 V".into()));
+        return Err(Error::Property(
+            "digital voltage must be between 1.2 and 5 V".into(),
+        ));
     }
     set_and_read(state, |arc| arc.set_exp_voltage(volts))
 }
@@ -358,9 +360,9 @@ fn get_view(
 }
 #[derive(Serialize)]
 struct AllStats {
-    channels: std::collections::BTreeMap<String, otii_rec::Stats>,
+    channels: std::collections::BTreeMap<String, benchwatt_rec::Stats>,
     charge_mah: Option<f64>,
-    energy: Option<otii_rec::Energy>,
+    energy: Option<benchwatt_rec::Energy>,
 }
 #[tauri::command]
 fn get_stats(state: tauri::State<'_, DeviceState>, t0: f64, t1: f64) -> Result<AllStats, String> {
@@ -385,7 +387,7 @@ fn get_uart(
     ch: u16,
     t0: f64,
     t1: f64,
-) -> Vec<otii_rec::UartChunk> {
+) -> Vec<benchwatt_rec::UartChunk> {
     state
         .recording
         .lock()
@@ -394,7 +396,7 @@ fn get_uart(
         .map_or(Vec::new(), |r| r.uart_channel(ch, t0, t1))
 }
 #[tauri::command]
-fn get_edges(state: tauri::State<'_, DeviceState>, t0: f64, t1: f64) -> Vec<otii_rec::Edge> {
+fn get_edges(state: tauri::State<'_, DeviceState>, t0: f64, t1: f64) -> Vec<benchwatt_rec::Edge> {
     state
         .recording
         .lock()

@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-import openotii
-from openotii._testing import recording_from_fixture
+import benchwatt
+from benchwatt._testing import recording_from_fixture
 from pathlib import Path
 
 FIXTURE = Path(__file__).resolve().parents[3] / "fixtures" / "session1.hex"
@@ -35,7 +35,7 @@ def test_fixture_data_and_stats(tmp_path):
     rec.save(str(native))
     rec.export(str(csv))
     rec.export(str(sr))
-    loaded = openotii.Recording.load(str(native))
+    loaded = benchwatt.Recording.load(str(native))
     lt, lv = loaded.data("mc")
     np.testing.assert_array_equal(lt, t)
     np.testing.assert_array_equal(lv, v)

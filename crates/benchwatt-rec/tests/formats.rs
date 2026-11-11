@@ -1,5 +1,5 @@
+use benchwatt_rec::{ChannelSpec, Kind, Recording, View, export, file::Meta};
 use otii_arc::msg::{Block, BlockBody};
-use otii_rec::{ChannelSpec, Kind, Recording, View, export, file::Meta};
 use std::{fs, io::Read};
 fn path(ext: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(

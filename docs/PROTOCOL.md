@@ -119,7 +119,7 @@ Recording: 0x78 per channel → 0x7C … 0x7E → 0x78 disable.
 - `mainsrccurrmode` 0 = cutoff: maxcur 10 mA below load → alert 6 (main-overcurr) and the
   device switches `main` off itself. [V]
 - `mainsrccurrmode` 1 = limit: constant current 9.98 mA, mv sags to 0.976 V, no alert. [V]
-- Recording via otii-rec (`cargo run -p otii-rec --example live`, 100 Ω, 1.8 V, 3 s): mc/mp 12000,
+- Recording via benchwatt-rec (`cargo run -p benchwatt-rec --example live`, 100 Ω, 1.8 V, 3 s): mc/mp 12000,
   mv 3000 samples, 0 gaps; mean 18.11 mA / 1.7998 V / 32.6 mW; UART ticks all received. [V]
 - **Open question — GPI in DATA vs monitor:** recorded gpi masks are 36 (bits 2,5) with gpo1
   low and 45 (bits 0,2,3,5) with gpo1 high, while the 0x16 monitor reports 0 / 9. Each gpiocfg
@@ -131,7 +131,7 @@ Recording: 0x78 per channel → 0x7C … 0x7E → 0x78 disable.
 - UART rx: the Arc sends rx bytes in the 1 ms data packets, so a burst gets split across
   consecutive packets ("hello a" + "pp\n"). Empty rx blocks (n=0) arrive every ms while rx is
   enabled. Opening the UART mid-recording works; an rx channel enabled without SET uart=1 stays
-  silent. otii-rec joins pieces ≤ 2 ms apart until '\n' or 256 bytes. [V]
+  silent. benchwatt-rec joins pieces ≤ 2 ms apart until '\n' or 256 bytes. [V]
 - Arc expansion port: GPO1–2, GPI1–2, 5 V pin (expoutvolt), I/O voltage (expvolt). The gpi
   mask has 6 bits; only bits 0–1 are inputs. Bit 3 follows GPO1 and bits 2/5 read high. [V]
 - The vendor app sends commit (0x68) after setting expvolt/expoutvolt; we do the same. [S]
