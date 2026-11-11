@@ -1,0 +1,11 @@
+[package]
+name = "jsdrv-sys"
+description = "Builds Jetperch's joulescope_driver and declares its C interface"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+links = "jsdrv"
+
+[build-dependencies]
+bindgen = "0.72"
+cmake = "0.1"

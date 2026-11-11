@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/benchwatt-device", "crates/otii-arc", "crates/benchwatt-cli", "crates/benchwatt-rec", "crates/benchwatt-session", "crates/benchwatt-py", "crates/benchwatt-ppk2", "crates/benchwatt-gpp", "app/src-tauri"]
+members = ["crates/benchwatt-device", "crates/otii-arc", "crates/benchwatt-cli", "crates/benchwatt-rec", "crates/benchwatt-session", "crates/benchwatt-py", "crates/benchwatt-ppk2", "crates/benchwatt-gpp", "crates/jsdrv-sys", "crates/benchwatt-joulescope", "app/src-tauri"]
 
 [workspace.package]
 edition = "2024"
