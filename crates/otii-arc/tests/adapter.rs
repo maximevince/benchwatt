@@ -227,7 +227,6 @@ fn convert_captured_session() {
 fn events_are_translated() {
     let (dev, mock) = mock(&[]);
     let events = dev.events();
-    assert_eq!(dev.get("4wire_active").unwrap(), Value::Null);
     let fixture = include_str!("../../../fixtures/hello_and_updates.txt");
     for line in fixture.lines().filter(|l| l.starts_with("update ")) {
         mock.send(&hex(line.rsplit_once(' ').unwrap().1));
@@ -253,7 +252,7 @@ fn events_are_translated() {
     }
     assert!(matches!(events.recv_timeout(WAIT).unwrap(), Event::Changed));
     assert!(mv && inputs && changed > 0);
-    assert_eq!(dev.get("4wire_active").unwrap(), Value::Bool(true));
+    assert_eq!(dev.get("4wire").unwrap(), Value::Bool(true));
 
     struct FailingReader(mpsc::Receiver<()>);
     impl Read for FailingReader {

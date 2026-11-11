@@ -1,6 +1,6 @@
 # `benchwatt` command line interface
 
-Build with `cargo build -p benchwatt-cli`; the binary is `target/debug/benchwatt`. Use `--port /dev/ttyACM0` to select an Arc explicitly. Live commands find a matching USB serial port if `--port` is omitted. `convert` and `stats` work entirely offline.
+Build with `cargo build -p benchwatt-cli`; the binary is `target/debug/benchwatt`. `benchwatt devices` lists the supported devices that are plugged in. Live commands use the one that is connected; with several, pick one by kind with `--device arc`. A device that cannot be found by its USB id is named with its port, `--device arc@/dev/ttyACM0` (`--port /dev/ttyACM0` is the short form for an Arc). On a supply with several outputs, `power --out N` picks the output. `convert` and `stats` work entirely offline.
 
 ## Scripting
 

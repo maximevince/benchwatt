@@ -6,7 +6,7 @@ use crate::{
 };
 use benchwatt_device::{
     Block, ChannelDesc, Data, Device, DeviceInfo, Error, ErrorKind, Event, Gpio, Kind, Meter,
-    OutputDesc, OutputState, Quantity, Range, Result, Supply, Uart, Value,
+    OutputDesc, OutputState, Range, Result, SettingDesc, SettingKind, Supply, Uart, Value,
 };
 use std::sync::{
     Arc as StdArc, Mutex,
@@ -100,30 +100,40 @@ pub fn convert(ms: u32, b: &msg::Block) -> Block {
 pub fn channels(chinfo: &prop::ChannelTable) -> Vec<ChannelDesc> {
     prop::CHANNELS
         .iter()
-        .map(|&(id, name, unit)| ChannelDesc {
-            id,
-            name: name.into(),
-            unit: unit.into(),
-            rate_hz: chinfo.get(id).rate_hz,
-            kind: match id {
+        .map(|&(id, name, unit)| {
+            let kind = match id {
                 0x16 => Kind::Digital,
                 0x17 | 0x19 => Kind::Bytes,
                 _ => Kind::Analog,
-            },
-            quantity: match unit {
-                "A" => Quantity::Current,
-                "V" => Quantity::Voltage,
-                "W" => Quantity::Power,
-                "°C" => Quantity::Temperature,
-                _ => Quantity::Other,
-            },
-            group: if matches!(name, "mc" | "mv" | "mp") {
-                "main".into()
-            } else {
-                String::new()
-            },
-            // The Arc has two digital inputs; the other mask bits are not inputs.
-            bits: if id == 0x16 { 2 } else { 0 },
+            };
+            let (label, extra) = match name {
+                "mc" => ("Current", false),
+                "mv" => ("Voltage", false),
+                "mp" => ("Power", false),
+                "ac" => ("ADC current", false),
+                "av" => ("ADC voltage", false),
+                "ap" => ("ADC power", true),
+                "sn" => ("Sense −", true),
+                "sp" => ("Sense +", true),
+                "vb" => ("VBUS", false),
+                "vj" => ("DC jack", true),
+                "tp" => ("Temperature", false),
+                "gpi" => ("Digital inputs", false),
+                "rx" => ("UART RX", false),
+                "tx" => ("UART TX", true),
+                _ => (name, true),
+            };
+            ChannelDesc {
+                group: if matches!(name, "mc" | "mv" | "mp") {
+                    "main".into()
+                } else {
+                    String::new()
+                },
+                // The Arc has two digital inputs; the other mask bits are not inputs.
+                bits: if id == 0x16 { 2 } else { 0 },
+                extra,
+                ..ChannelDesc::new(id, name, label, unit, chinfo.get(id).rate_hz, kind)
+            }
         })
         .collect()
 }
@@ -155,6 +165,7 @@ pub fn replay(capture: &str) -> (Vec<ChannelDesc>, Vec<Block>) {
     }
     (channels(&table), blocks)
 }
+const MODES: [&str; 2] = ["cutoff", "limit"];
 fn property_id(key: &str) -> Result<u32> {
     let id = match key.strip_prefix("0x") {
         Some(x) => u32::from_str_radix(x, 16).ok(),
@@ -227,14 +238,54 @@ impl Device for ArcDevice {
     fn channels(&self) -> Vec<ChannelDesc> {
         channels(&self.arc.info().chinfo)
     }
+    fn settings(&self) -> Vec<SettingDesc> {
+        let setting = |key: &str, label: &str, kind, output, readonly| SettingDesc {
+            key: key.into(),
+            label: label.into(),
+            kind,
+            output,
+            readonly,
+        };
+        vec![
+            setting(
+                "current_mode",
+                "Current mode",
+                SettingKind::Choice {
+                    options: MODES.iter().map(|m| (*m).into()).collect(),
+                },
+                Some(1),
+                false,
+            ),
+            setting(
+                "io_voltage",
+                "Digital voltage",
+                SettingKind::Number {
+                    min: 1.2,
+                    max: 5.0,
+                    unit: "V".into(),
+                },
+                None,
+                false,
+            ),
+            setting("5v_pin", "5 V pin", SettingKind::Bool, None, false),
+            setting("4wire", "4-wire", SettingKind::Bool, None, true),
+        ]
+    }
     fn get(&self, key: &str) -> Result<Value> {
-        if key == "4wire_active" {
-            return Ok(self
-                .shared
-                .four_wire
-                .lock()
-                .unwrap()
-                .map_or(Value::Null, Value::Bool));
+        match key {
+            "current_mode" => {
+                let mode = number(&self.arc.get_value(6)?)? as usize;
+                return Ok(MODES.get(mode).map_or(Value::Null, |m| (*m).into()));
+            }
+            "io_voltage" => return self.get("expvolt"),
+            "5v_pin" => return Ok((number(&self.arc.get_value(0x34)?)? > 0.0).into()),
+            // What the device reports while measuring wins over the setting.
+            "4wire" => {
+                if let Some(active) = *self.shared.four_wire.lock().unwrap() {
+                    return Ok(active.into());
+                }
+            }
+            _ => {}
         }
         Ok(match self.arc.get_value(property_id(key)?)? {
             PropertyValue::String(s) => Value::String(s),
@@ -245,6 +296,23 @@ impl Device for ArcDevice {
         })
     }
     fn set(&self, key: &str, value: Value) -> Result<()> {
+        match (key, &value) {
+            ("current_mode", Value::String(m)) => {
+                let mode = MODES
+                    .iter()
+                    .position(|x| x == m)
+                    .ok_or_else(|| Error::invalid("mode must be cutoff or limit"))?;
+                return self.set("mainsrccurrmode", mode.into());
+            }
+            ("io_voltage", _) => return self.set("expvolt", value),
+            ("5v_pin", Value::Bool(on)) => {
+                return self.set("expoutvolt", if *on { 5.0 } else { 0.0 }.into());
+            }
+            ("current_mode" | "5v_pin", _) => {
+                return Err(Error::invalid(format!("wrong value type for {key}")));
+            }
+            _ => {}
+        }
         let id = property_id(key)?;
         let Some(p) = prop::property(id) else {
             // Not in the table: the driver refuses it with its own error.
@@ -310,11 +378,14 @@ impl Supply for ArcDevice {
             .unwrap_or(5.0);
         vec![OutputDesc {
             n: 1,
+            label: "Main output".into(),
+            group: "main".into(),
             voltage: Range { min: 0.0, max },
-            current_limit: Range {
+            voltage_steps: Vec::new(),
+            current_limit: Some(Range {
                 min: 0.001,
                 max: 3.0,
-            },
+            }),
         }]
     }
     fn set_voltage(&self, out: u8, volts: f64) -> Result<()> {

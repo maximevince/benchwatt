@@ -1,6 +1,9 @@
 use benchwatt_rec::{Block, ChannelDesc, Data, Gap, Kind, Quantity, Recording, View};
 fn spec(id: u16, name: &str, kind: Kind, rate: u32) -> ChannelDesc {
     ChannelDesc {
+        label: String::new(),
+        extra: false,
+        set: false,
         id,
         name: name.into(),
         unit: String::new(),
@@ -13,6 +16,9 @@ fn spec(id: u16, name: &str, kind: Kind, rate: u32) -> ChannelDesc {
 }
 fn measured(id: u16, name: &str, rate: u32, quantity: Quantity, group: &str) -> ChannelDesc {
     ChannelDesc {
+        label: String::new(),
+        extra: false,
+        set: false,
         quantity,
         group: group.into(),
         ..spec(id, name, Kind::Analog, rate)

@@ -496,7 +496,10 @@ fn export_recording(
 fn worker(app: tauri::AppHandle) {
     let state = app.state::<DeviceState>();
     while state.running.load(Ordering::Acquire) {
-        let opened = benchwatt_session::find().map(|port| (benchwatt_session::open(&port), port));
+        let opened = benchwatt_session::find()
+            .into_iter()
+            .next()
+            .map(|found| (benchwatt_session::open(&found), found.port));
         if let Some((Err(e), port)) = &opened {
             eprintln!("open {port}: {e}");
         }
@@ -560,7 +563,7 @@ fn worker(app: tauri::AppHandle) {
                                 let _ = app.emit("settings", next.clone());
                                 settings = Some(next);
                             }
-                            if let Ok(Value::Bool(on)) = dev.get("4wire_active")
+                            if let Ok(Value::Bool(on)) = dev.get("4wire")
                                 && monitor.fourwire != Some(on)
                             {
                                 monitor.fourwire = Some(on);

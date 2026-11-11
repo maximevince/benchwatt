@@ -1,5 +1,5 @@
 //! Opens devices and runs captures: the one place where a driver meets a recording.
-use benchwatt_device::{Block, ChannelDesc, Device, Error, Kind, Result};
+use benchwatt_device::{Block, ChannelDesc, Device, Error, ErrorKind, Kind, Result};
 use benchwatt_rec::{Recording, file};
 use std::{
     sync::mpsc::{self, Receiver, RecvTimeoutError},
@@ -9,12 +9,73 @@ use std::{
 pub use benchwatt_device as device;
 pub use benchwatt_rec as rec;
 
-/// The port of the first supported device that is plugged in.
-pub fn find() -> Option<String> {
-    otii_arc::device::find_port()
+/// A supported device that is plugged in, not opened yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Found {
+    /// The driver's name, e.g. `arc`.
+    pub kind: &'static str,
+    pub port: String,
 }
-pub fn open(port: &str) -> Result<Box<dyn Device>> {
+/// A driver: its name, how it finds its devices by USB id and how it opens one.
+type Driver = (
+    &'static str,
+    fn() -> Vec<String>,
+    fn(&str) -> Result<Box<dyn Device>>,
+);
+const DRIVERS: &[Driver] = &[("arc", arc_ports, arc_open)];
+fn arc_ports() -> Vec<String> {
+    otii_arc::device::find_port().into_iter().collect()
+}
+fn arc_open(port: &str) -> Result<Box<dyn Device>> {
     Ok(Box::new(otii_arc::ArcDevice::open(port)?))
+}
+
+pub fn find() -> Vec<Found> {
+    DRIVERS
+        .iter()
+        .flat_map(|&(kind, ports, _)| ports().into_iter().map(move |port| Found { kind, port }))
+        .collect()
+}
+pub fn open(found: &Found) -> Result<Box<dyn Device>> {
+    let (_, _, open) = DRIVERS
+        .iter()
+        .find(|d| d.0 == found.kind)
+        .ok_or_else(|| Error::invalid(format!("unknown device kind {}", found.kind)))?;
+    open(&found.port)
+}
+/// Pick one device: `kind`, `kind@port` for a device that cannot be found by
+/// USB id, or nothing when only one is plugged in.
+pub fn select(device: Option<&str>) -> Result<Found> {
+    let found = find();
+    let Some(device) = device else {
+        return match found.as_slice() {
+            [one] => Ok(one.clone()),
+            [] => Err(Error::new(ErrorKind::Io, "no device found")),
+            many => Err(Error::invalid(format!(
+                "several devices found, pick one with --device: {}",
+                many.iter().map(|f| f.kind).collect::<Vec<_>>().join(", ")
+            ))),
+        };
+    };
+    let (kind, port) = match device.split_once('@') {
+        Some((kind, port)) => (kind, Some(port)),
+        None => (device, None),
+    };
+    let kind = DRIVERS
+        .iter()
+        .find(|d| d.0 == kind)
+        .ok_or_else(|| Error::invalid(format!("unknown device kind {kind}")))?
+        .0;
+    match port {
+        Some(port) => Ok(Found {
+            kind,
+            port: port.into(),
+        }),
+        None => found
+            .into_iter()
+            .find(|f| f.kind == kind)
+            .ok_or_else(|| Error::new(ErrorKind::Io, format!("no {kind} found"))),
+    }
 }
 pub fn channel(dev: &dyn Device, name: &str) -> Result<ChannelDesc> {
     dev.channels()

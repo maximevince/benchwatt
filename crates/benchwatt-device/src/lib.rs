@@ -28,6 +28,9 @@ pub struct ChannelDesc {
     /// Unique within the device; carries no meaning outside the driver.
     pub id: u16,
     pub name: String,
+    /// What a person calls it, e.g. `Current`.
+    #[serde(default)]
+    pub label: String,
     pub unit: String,
     /// Nominal sample rate; 0 for channels that only report events.
     pub rate_hz: u32,
@@ -41,6 +44,35 @@ pub struct ChannelDesc {
     /// Digital channels: how many low bits of the mask are real inputs.
     #[serde(default)]
     pub bits: u8,
+    /// Rarely needed; a channel list shows it last or hides it.
+    #[serde(default)]
+    pub extra: bool,
+    /// Reports the value that was set, not one that was measured.
+    #[serde(default)]
+    pub set: bool,
+}
+impl ChannelDesc {
+    pub fn new(id: u16, name: &str, label: &str, unit: &str, rate_hz: u32, kind: Kind) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            label: label.into(),
+            unit: unit.into(),
+            rate_hz,
+            kind,
+            quantity: match unit {
+                "A" => Quantity::Current,
+                "V" => Quantity::Voltage,
+                "W" => Quantity::Power,
+                "°C" => Quantity::Temperature,
+                _ => Quantity::Other,
+            },
+            group: String::new(),
+            bits: 0,
+            extra: false,
+            set: false,
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum Data {
@@ -84,8 +116,33 @@ impl Range {
 #[derive(Clone, Debug, Serialize)]
 pub struct OutputDesc {
     pub n: u8,
+    pub label: String,
+    /// The group of the channels that measure this output.
+    pub group: String,
     pub voltage: Range,
-    pub current_limit: Range,
+    /// Not empty: the only voltages the output can take.
+    pub voltage_steps: Vec<f64>,
+    /// `None` when the limit cannot be set.
+    pub current_limit: Option<Range>,
+}
+/// A device-specific knob. Its value is a bool, one of the choices as a string,
+/// or a number, by `kind`.
+#[derive(Clone, Debug, Serialize)]
+pub struct SettingDesc {
+    pub key: String,
+    pub label: String,
+    #[serde(flatten)]
+    pub kind: SettingKind,
+    /// The output it belongs to, if any.
+    pub output: Option<u8>,
+    pub readonly: bool,
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum SettingKind {
+    Bool,
+    Choice { options: Vec<String> },
+    Number { min: f64, max: f64, unit: String },
 }
 /// Setpoints, not measurements.
 #[derive(Clone, Copy, Debug, Serialize, PartialEq)]
@@ -155,8 +212,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub trait Device: Send + Sync {
     fn info(&self) -> DeviceInfo;
     fn channels(&self) -> Vec<ChannelDesc>;
-    /// Device-specific values by key. Anything two devices share in meaning
-    /// belongs in a trait below instead.
+    /// The device-specific values a user interface should offer. Anything two
+    /// devices share in meaning belongs in a trait below instead.
+    fn settings(&self) -> Vec<SettingDesc> {
+        Vec::new()
+    }
+    /// Read or write a setting, or another value the driver knows by key.
     fn get(&self, key: &str) -> Result<Value>;
     fn set(&self, key: &str, value: Value) -> Result<()>;
     fn events(&self) -> Receiver<Event>;

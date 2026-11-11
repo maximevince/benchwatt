@@ -4,7 +4,7 @@ use benchwatt_session::{Capture, rec::View};
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let dev = benchwatt_session::open(&benchwatt_session::find().ok_or("no device found")?)?;
+    let dev = benchwatt_session::open(&benchwatt_session::select(Some("arc"))?)?;
     let dev = dev.as_ref();
     let (supply, gpio, uart) = (
         dev.supply().ok_or("no supply")?,

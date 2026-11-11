@@ -17,6 +17,23 @@ pub fn render_with(v: &Value, color: bool) -> String {
     if v.get("channels").is_some() && v.get("duration_s").is_some() {
         return stats(v, color);
     }
+    if let Some(list) = v["devices"].as_array() {
+        let lines: Vec<_> = list
+            .iter()
+            .map(|d| {
+                format!(
+                    "{:<6} {}",
+                    d["kind"].as_str().unwrap_or_default(),
+                    d["port"].as_str().unwrap_or_default()
+                )
+            })
+            .collect();
+        return if lines.is_empty() {
+            "no devices found".into()
+        } else {
+            lines.join("\n")
+        };
+    }
     if let Some(props) = v.get("properties") {
         return info(props);
     }

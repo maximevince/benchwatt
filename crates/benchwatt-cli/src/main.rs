@@ -20,6 +20,10 @@ use std::{
 #[derive(Parser)]
 #[command(name = "benchwatt", version)]
 struct Cli {
+    /// Which device: its kind, or `kind@port` when it cannot be found by USB id.
+    #[arg(short, long, global = true)]
+    device: Option<String>,
+    /// Serial port of the Arc; the same as `--device arc@PORT`.
     #[arg(short, long, global = true)]
     port: Option<String>,
     #[arg(long, global = true)]
@@ -29,6 +33,8 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// List the supported devices that are plugged in.
+    Devices,
     Info,
     Get {
         name: String,
@@ -53,6 +59,9 @@ enum Command {
         ilim: Option<String>,
         #[arg(long)]
         mode: Option<String>,
+        /// Which output, on a supply with several.
+        #[arg(long, default_value_t = 1)]
+        out: u8,
         state: Option<String>,
     },
     Measure {
@@ -213,12 +222,11 @@ fn parse_bool(s: &str) -> Result<bool> {
     }
 }
 fn device(cli: &Cli) -> Result<Box<dyn Device>> {
-    let port = cli
-        .port
-        .clone()
-        .or_else(benchwatt_session::find)
-        .ok_or_else(|| Failure::io("no Arc serial port found"))?;
-    dev(benchwatt_session::open(&port))
+    let by_port = cli.port.as_ref().map(|p| format!("arc@{p}"));
+    let found = dev(benchwatt_session::select(
+        cli.device.as_deref().or(by_port.as_deref()),
+    ))?;
+    dev(benchwatt_session::open(&found))
 }
 fn dev<T>(r: benchwatt_session::device::Result<T>) -> Result<T> {
     r.map_err(|e| match e.kind {
@@ -354,22 +362,13 @@ fn validate_live(command: &Command) -> Result<()> {
             value_unit(a, "A")?;
         }
         Command::Power {
-            volt,
-            ilim,
-            mode,
-            state,
+            volt, ilim, state, ..
         } => {
             if let Some(v) = volt {
                 value_unit(v, "V")?;
             }
             if let Some(a) = ilim {
                 value_unit(a, "A")?;
-            }
-            if let Some(m) = mode
-                && m != "cutoff"
-                && m != "limit"
-            {
-                return Err(Failure::usage("mode must be cutoff or limit"));
             }
             if let Some(s) = state {
                 parse_bool(s)?;
@@ -436,6 +435,13 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
             write_format(&rec, output, &meta)?;
             return Ok((json!({"output":output,"samples":rec.sample_counts()}), 0));
         }
+        Command::Devices => {
+            let list: Vec<_> = benchwatt_session::find()
+                .iter()
+                .map(|f| json!({"kind":f.kind,"port":f.port}))
+                .collect();
+            return Ok((json!({"devices":list}), 0));
+        }
         Command::Stats { input, from, to } => {
             let (rec, _) = Recording::load(input).map_err(|e| Failure::io(e.to_string()))?;
             let f = from
@@ -497,31 +503,27 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
             volt,
             ilim,
             mode,
+            out,
             state,
         } => {
             let mut applied = serde_json::Map::new();
             if let Some(v) = volt {
                 let n = value_unit(&v, "V")?;
-                dev(supply(d)?.set_voltage(1, n))?;
+                dev(supply(d)?.set_voltage(out, n))?;
                 applied.insert("voltage_V".into(), json!(n));
             }
             if let Some(a) = ilim {
                 let n = value_unit(&a, "A")?;
-                dev(supply(d)?.set_current_limit(1, n))?;
+                dev(supply(d)?.set_current_limit(out, n))?;
                 applied.insert("current_limit_A".into(), json!(n));
             }
             if let Some(m) = mode {
-                let id = match m.as_str() {
-                    "cutoff" => 0,
-                    "limit" => 1,
-                    _ => return Err(Failure::usage("mode must be cutoff or limit")),
-                };
-                dev(d.set("mainsrccurrmode", json!(id)))?;
+                dev(d.set("current_mode", json!(m)))?;
                 applied.insert("mode".into(), json!(m));
             }
             if let Some(s) = state {
                 let on = parse_bool(&s)?;
-                dev(supply(d)?.set_enabled(1, on))?;
+                dev(supply(d)?.set_enabled(out, on))?;
                 applied.insert("output".into(), json!(on));
             }
             Value::Object(applied)
@@ -607,7 +609,7 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
             dev(gpio(d)?.set_output(n, parse_bool(&state)?))?;
             json!({"gpo":n,"state":state})
         }
-        Command::Convert { .. } | Command::Stats { .. } => unreachable!(),
+        Command::Convert { .. } | Command::Stats { .. } | Command::Devices => unreachable!(),
     };
     Ok((value, 0))
 }
@@ -646,6 +648,7 @@ mod tests {
         let csv = base.with_extension("csv");
         rec.save(&native, &Meta::default()).unwrap();
         let (converted, code) = run(Cli {
+            device: None,
             port: None,
             json: true,
             command: Command::Convert {
@@ -657,6 +660,7 @@ mod tests {
         assert_eq!(code, 0);
         assert_eq!(converted["samples"]["mc"], rec.sample_counts()["mc"]);
         let (stats, code) = run(Cli {
+            device: None,
             port: None,
             json: true,
             command: Command::Stats {

@@ -15,6 +15,9 @@ fn path(ext: &str) -> std::path::PathBuf {
 }
 fn spec(id: u16, name: &str, unit: &str, rate_hz: u32, kind: Kind) -> ChannelDesc {
     ChannelDesc {
+        label: String::new(),
+        extra: false,
+        set: false,
         id,
         name: name.into(),
         unit: unit.into(),
@@ -27,6 +30,9 @@ fn spec(id: u16, name: &str, unit: &str, rate_hz: u32, kind: Kind) -> ChannelDes
 }
 fn digital(id: u16, name: &str, bits: u8) -> ChannelDesc {
     ChannelDesc {
+        label: String::new(),
+        extra: false,
+        set: false,
         bits,
         ..spec(id, name, "", 1000, Kind::Digital)
     }
@@ -53,11 +59,17 @@ fn native_roundtrip() {
     let tx = spec(0x19, "tx", "", 0, Kind::Bytes);
     let mut rec = Recording::new(&[
         ChannelDesc {
+            label: String::new(),
+            extra: false,
+            set: false,
             quantity: Quantity::Current,
             group: "dut".into(),
             ..spec(0, "mc", "A", 4000, Kind::Analog)
         },
         ChannelDesc {
+            label: String::new(),
+            extra: false,
+            set: false,
             quantity: Quantity::Voltage,
             group: "dut".into(),
             ..spec(1, "mv", "V", 1000, Kind::Analog)

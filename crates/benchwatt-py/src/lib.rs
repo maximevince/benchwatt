@@ -245,11 +245,10 @@ impl PyArc {
     #[new]
     #[pyo3(signature = (port=None))]
     fn new(port: Option<&str>) -> PyResult<Self> {
-        let path = port
-            .map(str::to_owned)
-            .or_else(benchwatt_session::find)
-            .ok_or_else(|| DeviceError::new_err("no Arc serial port found"))?;
-        let dev = benchwatt_session::open(&path).map_err(device_error)?;
+        let arc = port.map_or("arc".into(), |p| format!("arc@{p}"));
+        let found = benchwatt_session::select(Some(&arc))
+            .map_err(|_| DeviceError::new_err("no Arc serial port found"))?;
+        let dev = benchwatt_session::open(&found).map_err(device_error)?;
         let rx = dev.events();
         Ok(Self {
             dev: Some(dev),
