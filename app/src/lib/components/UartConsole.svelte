@@ -1,7 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { app } from '$lib/stores.svelte';
-  import { backend } from '$lib/backend';
   import { linesFromChunks, filterLines, linesInRange, formatUartTime, type UartLine } from '$lib/uart';
   import { Button } from '$lib/components/ui/button';
   import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut } from '$lib/components/ui/context-menu';
@@ -40,7 +39,7 @@
   async function send() {
     if (!outgoing || !app.uartOpen) return;
     const raw=outgoing, suffix=ending === 'LF' ? '\n' : ending === 'CRLF' ? '\r\n' : '';
-    try { await backend.uartSend(raw+suffix); history.push(raw); historyIndex=history.length; outgoing=''; await app.refreshDetails(); pinned=true; }
+    try { await app.uartSend(raw+suffix); history.push(raw); historyIndex=history.length; outgoing=''; await app.refreshDetails(); pinned=true; }
     catch (cause) { app.report(cause); }
   }
   function sendKey(event: KeyboardEvent) {
@@ -60,8 +59,8 @@
 </script>
 <div class="uart-console" onkeydown={copy} role="listbox" tabindex="0" aria-label="UART console">
   <div class="uart-console-toolbar">
-    <label>Baud <input type="number" min="1" max="3000000" bind:value={app.baud} disabled={app.uartOpen}/></label>
-    <Button size="sm" variant="outline" disabled={!app.connection.connected} onclick={() => void app.toggleUart()}>{app.uartOpen ? 'Close' : 'Open'}</Button>
+    {#if app.selected?.desc.uart}<label>Baud <input type="number" min="1" max="3000000" bind:value={app.baud} disabled={app.uartOpen}/></label>
+    <Button size="sm" variant="outline" disabled={!app.selected.state} onclick={() => void app.toggleUart()}>{app.uartOpen ? 'Close' : 'Open'}</Button>{/if}
     <button class:active={!hex} onclick={() => hex=false}>ASCII</button><button class:active={hex} onclick={() => hex=true}>Hex</button>
     <label><input type="checkbox" bind:checked={showTx}/> Show TX</label><label><input type="checkbox" bind:checked={showTimes}/> Timestamps</label>
     <input class="uart-filter" placeholder="Filter lines…" aria-label="Filter UART lines" bind:value={query}/>
@@ -69,6 +68,7 @@
   </div>
   <div class="uart-viewport" bind:this={scroller} bind:clientHeight={viewport} onscroll={onScroll}>
     {#if query && filtered.length === 0 && all.length > 0}<p class="empty-state">No lines match “{query}”</p>
+    {:else if !app.selected?.desc.uart && filtered.length === 0}<p class="empty-state">{app.selected ? 'This device has no UART' : 'No UART data'}</p>
     {:else if !app.uartOpen && filtered.length === 0}<p class="empty-state">Open the UART to capture RX</p>
     {:else if !app.recording?.active && filtered.length === 0}<p class="empty-state">RX is captured while recording (press R)</p>{/if}
     <div style:height={filtered.length*rowHeight+'px'} class="uart-virtual-space">
@@ -80,5 +80,5 @@
     </div>
   </div>
   {#if !pinned}<button class="uart-jump" onclick={() => { scroller.scrollTop=scroller.scrollHeight; pinned=true; }}>Jump to latest</button>{/if}
-  <form class="uart-send" onsubmit={e => { e.preventDefault(); void send(); }}><input aria-label="UART text to send" placeholder="Send text…" bind:value={outgoing} disabled={!app.uartOpen} onkeydown={sendKey}/><select aria-label="Line ending" bind:value={ending}><option>None</option><option>LF</option><option>CRLF</option></select><Button type="submit" size="sm" disabled={!app.uartOpen || !outgoing}>Send</Button></form>
+  {#if app.selected?.desc.uart}<form class="uart-send" onsubmit={e => { e.preventDefault(); void send(); }}><input aria-label="UART text to send" placeholder="Send text…" bind:value={outgoing} disabled={!app.uartOpen} onkeydown={sendKey}/><select aria-label="Line ending" bind:value={ending}><option>None</option><option>LF</option><option>CRLF</option></select><Button type="submit" size="sm" disabled={!app.uartOpen || !outgoing}>Send</Button></form>{/if}
 </div>

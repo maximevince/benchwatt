@@ -1,7 +1,6 @@
 <script lang="ts">
   import { app } from '$lib/stores.svelte';
   import { Menubar, MenubarMenu, MenubarTrigger, MenubarContent, MenubarItem, MenubarSeparator, MenubarShortcut, MenubarSub, MenubarSubTrigger, MenubarSubContent, MenubarCheckboxItem, MenubarRadioGroup, MenubarRadioItem } from '$lib/components/ui/menubar';
-  import { channel } from '$lib/channels';
 </script>
 <Menubar class="main-menu">
   <MenubarMenu><MenubarTrigger>File</MenubarTrigger><MenubarContent>
@@ -19,16 +18,16 @@
     <MenubarItem disabled={!app.recording} onclick={() => app.zoomFit()}>Zoom to fit<MenubarShortcut>F</MenubarShortcut></MenubarItem>
     <MenubarItem disabled={!app.recording} onclick={() => app.zoom(.5)}>Zoom in<MenubarShortcut>+ / =</MenubarShortcut></MenubarItem>
     <MenubarItem disabled={!app.recording} onclick={() => app.zoom(2)}>Zoom out<MenubarShortcut>−</MenubarShortcut></MenubarItem>
-    <MenubarSub><MenubarSubTrigger disabled={!app.hiddenLanes.length}>Hidden lanes</MenubarSubTrigger><MenubarSubContent>{#each app.hiddenLanes as ch}<MenubarItem onclick={() => app.hiddenLanes=app.hiddenLanes.filter(lane => lane !== ch)}>{channel(ch).label}</MenubarItem>{/each}</MenubarSubContent></MenubarSub>
+    <MenubarSub><MenubarSubTrigger disabled={!app.hiddenLanes.length}>Hidden lanes</MenubarSubTrigger><MenubarSubContent>{#each app.hiddenLanes as ch}<MenubarItem onclick={() => app.hiddenLanes=app.hiddenLanes.filter(lane => lane !== ch)}>{app.lanes.find(lane => lane.key === ch)?.label ?? ch}</MenubarItem>{/each}</MenubarSubContent></MenubarSub>
     <MenubarCheckboxItem checked={app.follow} onclick={() => app.follow = !app.follow}>Follow</MenubarCheckboxItem>
     <MenubarItem onclick={() => app.drawerOpen = !app.drawerOpen}>Toggle bottom panel<MenubarShortcut>Ctrl+J</MenubarShortcut></MenubarItem>
     <MenubarSub><MenubarSubTrigger>Theme</MenubarSubTrigger><MenubarSubContent><MenubarRadioGroup value={app.theme}>{#each ['system','light','dark'] as theme}<MenubarRadioItem value={theme} onclick={() => app.setTheme(theme as 'system' | 'light' | 'dark')}>{theme[0].toUpperCase()+theme.slice(1)}</MenubarRadioItem>{/each}</MenubarRadioGroup></MenubarSubContent></MenubarSub>
   </MenubarContent></MenubarMenu>
   <MenubarMenu><MenubarTrigger>Device</MenubarTrigger><MenubarContent>
-    <MenubarItem disabled={!app.connection.connected} onclick={() => void app.command('set_output',{on: !app.settings?.main})}>Output on/off<MenubarShortcut>Ctrl+E</MenubarShortcut></MenubarItem>
-    <MenubarItem disabled={!app.connection.connected} onclick={() => void app.toggleRecording()}>{app.recording?.active ? 'Stop recording' : 'Start recording'}<MenubarShortcut>R</MenubarShortcut></MenubarItem>
-    <MenubarItem disabled={!app.connection.connected} onclick={() => void app.toggleUart()}>UART {app.uartOpen ? 'close' : 'open'}</MenubarItem>
-    <MenubarItem disabled={!app.connection.connected} onclick={() => app.dialog='device'}>Device info…</MenubarItem>
+    <MenubarItem disabled={!app.selected?.desc.outputs.length} onclick={() => void app.toggleOutput()}>Output on/off<MenubarShortcut>Ctrl+E</MenubarShortcut></MenubarItem>
+    <MenubarItem disabled={!app.selected && !app.recording?.active} onclick={() => void app.toggleRecording()}>{app.recording?.active ? 'Stop recording' : 'Start recording'}<MenubarShortcut>R</MenubarShortcut></MenubarItem>
+    {#if app.selected?.desc.uart}<MenubarItem onclick={() => void app.toggleUart()}>UART {app.uartOpen ? 'close' : 'open'}</MenubarItem>{/if}
+    <MenubarItem disabled={!app.selected} onclick={() => app.dialog='device'}>Device info…</MenubarItem>
   </MenubarContent></MenubarMenu>
   <MenubarMenu><MenubarTrigger>Help</MenubarTrigger><MenubarContent>
     <MenubarItem onclick={() => app.showShortcuts()}>Keyboard shortcuts<MenubarShortcut>?</MenubarShortcut></MenubarItem>

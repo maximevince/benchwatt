@@ -3,7 +3,7 @@
   import { backend, type View, type UartChunk } from '$lib/backend';
   import { app } from '$lib/stores.svelte';
   import { formatReading } from '$lib/format';
-  import { GPI_INPUTS, channel } from '$lib/channels';
+  import { UART_LANE, formatValue, readingKind, type Lane } from '$lib/channels';
   import SelectionCard from './SelectionCard.svelte';
   import { niceTicks, zoomAt, panFrom, type Range } from '$lib/view-math';
   import { envelopeRuns, type EnvelopePoint } from '$lib/view';
@@ -13,31 +13,32 @@
   let host: HTMLDivElement, canvas: HTMLCanvasElement;
   let width = $state(700), availableHeight = $state(400), version = $state(0);
   let selecting = $state(false), cursor = $state<number | null>(null);
-  let expandedIdle = $state(false), hoveredUart = $state<UartChunk | null>(null);
+  let hoveredUart = $state<UartChunk | null>(null);
   let menuTime = $state(0), menuUart = $state<UartChunk | null>(null);
   let locked = $state<string[]>([]), logarithmic = $state<string[]>([]);
   let scales: Record<string, Range> = {}, visibleMeans: Record<string, number> = {}, sampleSpacing = Infinity, previousDuration = 0, wasActive = false, queued = false;
   const views = new Map<string, View>(), inflight = new Set<string>();
   let drag: { x: number; range: Range; mode: 'pan' | 'select' | 'start' | 'end'; anchor: number } | null = null;
-  const analog = $derived((app.recording?.channels ?? []).filter(ch => channel(ch).kind === 'analog'));
-  // The Arc wires GPI1–2 only; show both lanes whenever gpi is recorded.
-  const active = GPI_INPUTS, idle: number[] = [];
-  const lanes = $derived([...analog, ...(app.recording?.channels.includes('gpi') ? [...active.map(n => 'gpi'+n), ...(idle.length ? expandedIdle ? idle.map(n => 'gpi'+n) : ['idle'] : [])] : []), ...(app.recording?.channels.some(ch => ch === 'rx' || ch === 'tx') ? ['rx'] : [])].filter(ch => !app.hiddenLanes.includes(ch)));
-  const analogHeight = $derived(Math.max(110, (availableHeight - 32 - lanes.filter(ch => ch.startsWith('gpi') || ch === 'idle').length * 24 - (lanes.includes('rx') ? 44 : 0)) / Math.max(analog.length, 1)));
-  const laneHeight = (ch: string) => ch === 'rx' ? 44 : ch.startsWith('gpi') || ch === 'idle' ? 24 : analogHeight;
-  const height = $derived(32 + lanes.reduce((sum, ch) => sum + laneHeight(ch), 0));
-  const topOf = (ch: string) => 32 + lanes.slice(0, lanes.indexOf(ch)).reduce((sum, lane) => sum + laneHeight(lane), 0);
+  // Lanes come from the recording's own channel list, so an opened file plots without its device.
+  const analog = $derived(app.lanes.filter(lane => lane.kind === 'analog').map(lane => lane.key));
+  const lanes = $derived(app.lanes.filter(lane => !app.hiddenLanes.includes(lane.key)));
+  const hasUart = $derived(lanes.some(lane => lane.kind === 'uart'));
+  const analogHeight = $derived(Math.max(110, (availableHeight - 32 - lanes.filter(lane => lane.kind === 'digital').length * 24 - (hasUart ? 44 : 0)) / Math.max(analog.length, 1)));
+  const laneHeight = (lane: Lane) => lane.kind === 'uart' ? 44 : lane.kind === 'digital' ? 24 : analogHeight;
+  const height = $derived(32 + lanes.reduce((sum, lane) => sum + laneHeight(lane), 0));
+  const topOf = (key: string) => 32 + lanes.slice(0, lanes.findIndex(lane => lane.key === key)).reduce((sum, lane) => sum + laneHeight(lane), 0);
+  const descOf = (ch: string) => app.lanes.find(lane => lane.key === ch)?.channel;
+  const labelOf = (key: string) => app.lanes.find(lane => lane.key === key)?.label ?? key;
   const x = (t: number) => (t - app.viewRange[0]) / (app.viewRange[1] - app.viewRange[0]) * width;
   const time = (px: number) => app.viewRange[0] + px / width * (app.viewRange[1] - app.viewRange[0]);
   function uartIndex(t: number) { let lo=0, hi=app.uart.length; while (lo<hi) { const mid=(lo+hi)>>1; if (app.uart[mid].t<t) lo=mid+1; else hi=mid; } return lo; }
   const minimumSpan = () => Math.max(1e-6, 20 * Math.min(sampleSpacing, (app.recording?.duration_s ?? 1) / Math.max(1, ...analog.map(ch => app.recording?.samples[ch] ?? 0))));
   const duration = () => Math.max(app.recording?.duration_s ?? 0, minimumSpan());
-  const kind = (ch: string): 'current' | 'voltage' | 'power' => { const unitKind=channel(ch).unitKind; return unitKind === 'current' || unitKind === 'power' ? unitKind : 'voltage'; };
-  const unit = (ch: string) => channel(ch).unit;
-  function reading(value: number, ch: string) { if (channel(ch).unitKind === 'temperature') return Number.isFinite(value) ? value.toFixed(2)+' °C' : '—'; const r = formatReading(value, kind(ch)); return r.number.trim()+' '+r.unit; }
+  function reading(value: number, ch: string) { const desc=descOf(ch); return desc ? formatValue(value, desc) : String(value); }
   function axisReading(value: number, step: number, ch: string) {
-    if (channel(ch).unitKind === 'temperature') return value.toFixed(Math.max(0, Math.ceil(-Math.log10(Math.abs(step) || 1))))+' °C';
-    const r = formatReading(value, kind(ch));
+    const desc=descOf(ch), kind=desc && readingKind(desc.quantity);
+    if (!kind) return (value.toFixed(Math.max(0, Math.ceil(-Math.log10(Math.abs(step) || 1))))+' '+(desc?.unit ?? '')).trim();
+    const r = formatReading(value, kind);
     const factors: Record<string, number> = { A: 1, mA: 1e-3, µA: 1e-6, nA: 1e-9, W: 1, mW: 1e-3, µW: 1e-6, nW: 1e-9, V: 1, mV: 1e-3, µV: 1e-6 };
     const factor=factors[r.unit] ?? 1, scaledStep=Math.abs(step/factor);
     let decimals=0; while (decimals<12 && Math.abs(scaledStep*10**decimals-Math.round(scaledStep*10**decimals))>1e-8) decimals++;
@@ -84,12 +85,11 @@
     ctx.clearRect(0,0,width,height); ctx.font = '10px "Geist Mono"';
     const span = app.viewRange[1]-app.viewRange[0];
     for (let i=0;i<=5;i++) { const at=width*i/5; ctx.fillStyle=color('--muted-foreground'); ctx.fillText(formatTime(time(at),span),Math.min(at+4,width-70),16); ctx.strokeStyle=color('--border'); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(at,24); ctx.lineTo(at,height); ctx.stroke(); }
-    for (const ch of lanes) {
-      const top=topOf(ch), bottom=top+laneHeight(ch);
+    for (const lane of lanes) {
+      const ch=lane.key, top=topOf(ch), bottom=top+laneHeight(lane);
       ctx.strokeStyle=color('--border'); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(0,bottom-.5); ctx.lineTo(width,bottom-.5); ctx.stroke();
-      if (ch === 'idle') continue;
-      if (ch.startsWith('gpi')) {
-        const bit=Number(ch.slice(3))-1, low=bottom-5, high=top+4;
+      if (lane.kind === 'digital') {
+        const bit=lane.bit, low=bottom-5, high=top+4;
         let mask=app.edges[0]?.mask ?? 0, last=0;
         for (const edge of app.edges) {
           if (edge.t < app.viewRange[0]) { mask=edge.mask; continue; }
@@ -100,7 +100,7 @@
         }
         ctx.strokeStyle=color('--digital'); ctx.beginPath(); ctx.moveTo(last,mask & (1<<bit) ? high : low); ctx.lineTo(width,mask & (1<<bit) ? high : low); ctx.stroke(); continue;
       }
-      if (ch === 'rx') {
+      if (lane.kind === 'uart') {
         // Two rows: rx on top, tx below. Each pill gets the room up to the next chunk in its own row.
         const rowTop = (dir: string | undefined) => top+(dir === 'tx' ? 23 : 4);
         const charWidth=ctx.measureText('M').width;
@@ -140,12 +140,12 @@
         if (ticks.length > 1) [min,max]=[ticks[0],ticks.at(-1)!];
         scales[ch]=[min,max];
       }
-      const y=(v: number) => bottom-8-(transform(v)-min)/(max-min)*(laneHeight(ch)-16);
+      const y=(v: number) => bottom-8-(transform(v)-min)/(max-min)*(laneHeight(lane)-16);
       const ticks=niceTicks(min,max,5);
       const tickStep=ticks.length > 1 ? ticks[1]-ticks[0] : max-min;
       const eps=(max-min)*1e-6;
-      for (const tick of ticks.filter(t => t >= min-eps && t <= max+eps)) { const yy=bottom-8-(tick-min)/(max-min)*(laneHeight(ch)-16); ctx.strokeStyle=color('--border'); ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(width,yy); ctx.stroke(); ctx.fillStyle=color('--muted-foreground'); ctx.fillText(log ? reading(10**tick,ch) : axisReading(tick,tickStep,ch),4,yy-3); }
-      const trace=color('--'+channel(ch).color); ctx.strokeStyle=trace; ctx.fillStyle=trace;
+      for (const tick of ticks.filter(t => t >= min-eps && t <= max+eps)) { const yy=bottom-8-(tick-min)/(max-min)*(laneHeight(lane)-16); ctx.strokeStyle=color('--border'); ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(width,yy); ctx.stroke(); ctx.fillStyle=color('--muted-foreground'); ctx.fillText(log ? reading(10**tick,ch) : axisReading(tick,tickStep,ch),4,yy-3); }
+      const trace=color('--'+lane.color); ctx.strokeStyle=trace; ctx.fillStyle=trace;
       if (view.kind === 'raw') {
         ctx.lineWidth=1.25; ctx.beginPath(); let lastValid=false;
         view.t.forEach((t,i) => { if (!Number.isFinite(view.v[i])) { lastValid=false; return; } if (lastValid) ctx.lineTo(x(t),y(view.v[i])); else ctx.moveTo(x(t),y(view.v[i])); lastValid=true; }); ctx.stroke();
@@ -178,8 +178,8 @@
   function centerHere() { const span=app.viewRange[1]-app.viewRange[0]; app.follow=false; app.viewRange=panFrom(app.viewRange,(app.viewRange[0]+span/2-menuTime)/span*width,width,duration(),minimumSpan()); schedule(); }
   async function copyPoint() { try { await navigator.clipboard.writeText(valuesAtTimeTsv(menuTime,analog,views)); } catch (cause) { app.report(cause); } }
   function uartAt(px: number, py: number) {
-    if (!lanes.includes('rx') || py < topOf('rx') || py > topOf('rx')+44) return null;
-    const tx=py > topOf('rx')+21;
+    if (!hasUart || py < topOf(UART_LANE) || py > topOf(UART_LANE)+44) return null;
+    const tx=py > topOf(UART_LANE)+21;
     return app.uart.slice(Math.max(0,uartIndex(time(px))-8),uartIndex(time(px))+2).filter(chunk => (chunk.dir === 'tx') === tx && px >= x(chunk.t)-6 && px <= x(chunk.t)+Math.max(8,printable(chunk.bytes).length*6+12)).at(-1) ?? null;
   }
   function plotContext(event: MouseEvent) { menuTime=Math.max(0,Math.min(duration(),time(event.offsetX))); menuUart=uartAt(event.offsetX,event.offsetY); }
@@ -232,16 +232,15 @@
 <section class="recording-panel">
   <div class="recording-toolbar"><strong>Recording</strong><span>{app.recording?.duration_s.toFixed(2) ?? '0.00'} s · {app.recording?.gaps ?? 0} gaps</span><button onclick={() => { app.follow=!app.follow; schedule(); }} class:active={app.follow}>Follow</button><button onclick={() => selecting=!selecting} class:active={selecting}>Select range</button><button onclick={fit}>Fit</button></div>
   <div class="recording-stage" bind:this={host}>
-    <div class="lane-headers"><div class="axis-spacer"></div>{#each lanes as ch}
-      {#if ch === 'idle'}<button class="idle-lane" style:height={laneHeight(ch)+'px'} onclick={() => expandedIdle=true}>Digital in {idle.length > 1 && idle.every((n,i) => n === idle[0]+i) ? idle[0]+'–'+idle.at(-1) : idle.join(', ')} idle ▾</button>
-      {:else}<ContextMenu><ContextMenuTrigger class="lane-label" style={'height:'+laneHeight(ch)+'px'}><div class="lane-name"><span class="lane-swatch" style:background={'var(--'+channel(ch).color+')'}></span><strong title={ch}>{ch === 'rx' && app.recording?.channels.includes('tx') ? app.recording.channels.includes('rx') ? 'UART RX / TX' : channel('tx').label : channel(ch).label}</strong><small>{channel(ch).kind === 'analog' ? unit(ch) : ''}</small></div>
-        {#if channel(ch).kind === 'analog'}<div class="lane-value">{currentValue(ch)}</div><div class="lane-mean">mean {meanValue(ch)}</div><div class="lane-actions"><button onclick={() => toggleLock(ch)} title="Lock y scale" aria-label={'Lock y scale for '+channel(ch).label}>{locked.includes(ch) ? '🔒' : '⌁'}</button>{#if channel(ch).unitKind === 'current'}<button class:active={logarithmic.includes(ch)} onclick={() => toggleLog(ch)} title="Log scale" aria-label={'Log scale for '+channel(ch).label}>log</button>{/if}</div>{/if}</ContextMenuTrigger>
-        <ContextMenuContent class="plot-context-menu"><ContextMenuCheckboxItem disabled={channel(ch).kind !== 'analog'} checked={locked.includes(ch)} onclick={() => toggleLock(ch)}>Lock y scale</ContextMenuCheckboxItem><ContextMenuCheckboxItem disabled={channel(ch).unitKind !== 'current'} checked={logarithmic.includes(ch)} onclick={() => toggleLog(ch)}>Log scale</ContextMenuCheckboxItem><ContextMenuItem disabled={channel(ch).kind !== 'analog'} onclick={() => autoscale(ch)}>Autoscale now</ContextMenuItem><ContextMenuSeparator/><ContextMenuItem onclick={() => app.hiddenLanes=[...app.hiddenLanes,ch]}>Hide lane</ContextMenuItem><ContextMenuSub><ContextMenuSubTrigger disabled={!app.hiddenLanes.length}>Hidden lanes</ContextMenuSubTrigger><ContextMenuSubContent class="plot-context-menu">{#each app.hiddenLanes as hidden}<ContextMenuItem onclick={() => app.hiddenLanes=app.hiddenLanes.filter(lane => lane !== hidden)}>{channel(hidden).label}</ContextMenuItem>{/each}</ContextMenuSubContent></ContextMenuSub></ContextMenuContent></ContextMenu>{/if}
-    {/each}{#if expandedIdle && idle.length}<button class="idle-collapse" onclick={() => expandedIdle=false}>Collapse idle inputs</button>{/if}</div>
+    <div class="lane-headers"><div class="axis-spacer"></div>{#each lanes as lane (lane.key)}{@const ch=lane.key}{@const isAnalog=lane.kind === 'analog'}{@const isCurrent=isAnalog && lane.channel.quantity === 'Current'}
+      <ContextMenu><ContextMenuTrigger class="lane-label" style={'height:'+laneHeight(lane)+'px'}><div class="lane-name"><span class="lane-swatch" style:background={'var(--'+lane.color+')'}></span><strong title={lane.channel.name}>{lane.label}</strong><small>{isAnalog ? lane.unit : ''}</small></div>
+        {#if isAnalog}<div class="lane-value">{currentValue(ch)}</div><div class="lane-mean">mean {meanValue(ch)}</div><div class="lane-actions"><button onclick={() => toggleLock(ch)} title="Lock y scale" aria-label={'Lock y scale for '+lane.label}>{locked.includes(ch) ? '🔒' : '⌁'}</button>{#if isCurrent}<button class:active={logarithmic.includes(ch)} onclick={() => toggleLog(ch)} title="Log scale" aria-label={'Log scale for '+lane.label}>log</button>{/if}</div>{/if}</ContextMenuTrigger>
+        <ContextMenuContent class="plot-context-menu"><ContextMenuCheckboxItem disabled={!isAnalog} checked={locked.includes(ch)} onclick={() => toggleLock(ch)}>Lock y scale</ContextMenuCheckboxItem><ContextMenuCheckboxItem disabled={!isCurrent} checked={logarithmic.includes(ch)} onclick={() => toggleLog(ch)}>Log scale</ContextMenuCheckboxItem><ContextMenuItem disabled={!isAnalog} onclick={() => autoscale(ch)}>Autoscale now</ContextMenuItem><ContextMenuSeparator/><ContextMenuItem onclick={() => app.hiddenLanes=[...app.hiddenLanes,ch]}>Hide lane</ContextMenuItem><ContextMenuSub><ContextMenuSubTrigger disabled={!app.hiddenLanes.length}>Hidden lanes</ContextMenuSubTrigger><ContextMenuSubContent class="plot-context-menu">{#each app.hiddenLanes as hidden}<ContextMenuItem onclick={() => app.hiddenLanes=app.hiddenLanes.filter(key => key !== hidden)}>{labelOf(hidden)}</ContextMenuItem>{/each}</ContextMenuSubContent></ContextMenuSub></ContextMenuContent></ContextMenu>
+    {/each}</div>
     <div class="plot-surface"><ContextMenu><ContextMenuTrigger><canvas bind:this={canvas} style:width={width+'px'} style:height={height+'px'} onwheel={wheel} oncontextmenu={plotContext} onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} ondblclick={fit} onpointerleave={() => { cursor=null; hoveredUart=null; draw(); }}></canvas></ContextMenuTrigger>
       <ContextMenuContent class="plot-context-menu">{#if menuUart}<ContextMenuItem onclick={() => copyUartLine()}>Copy line</ContextMenuItem><ContextMenuItem onclick={() => copyUartLine(true)}>Copy as hex</ContextMenuItem><ContextMenuItem onclick={showUartInConsole}>Show in console</ContextMenuItem><ContextMenuSeparator/>{/if}<ContextMenuItem disabled={!app.range} onclick={zoomToSelection}>Zoom to selection</ContextMenuItem><ContextMenuItem disabled={!app.range || !app.stats} onclick={() => void app.copyStats()}>Copy selection stats<ContextMenuShortcut>Ctrl+Shift+C</ContextMenuShortcut></ContextMenuItem><ContextMenuSub><ContextMenuSubTrigger disabled={!app.range}>Export selection</ContextMenuSubTrigger><ContextMenuSubContent class="plot-context-menu"><ContextMenuItem onclick={() => void app.exportRecording('csv',true)}>CSV…</ContextMenuItem><ContextMenuItem onclick={() => void app.exportRecording('sr',true)}>sigrok session (.sr)…</ContextMenuItem></ContextMenuSubContent></ContextMenuSub><ContextMenuItem disabled={!app.range} onclick={() => app.clearSelection()}>Clear selection<ContextMenuShortcut>Esc</ContextMenuShortcut></ContextMenuItem><ContextMenuSeparator/><ContextMenuItem onclick={() => app.zoomFit()}>Zoom to fit<ContextMenuShortcut>F</ContextMenuShortcut></ContextMenuItem><ContextMenuItem onclick={() => zoomHere(.5)}>Zoom in here</ContextMenuItem><ContextMenuItem onclick={() => zoomHere(2)}>Zoom out here</ContextMenuItem><ContextMenuItem onclick={centerHere}>Center view here</ContextMenuItem><ContextMenuItem onclick={() => void copyPoint()}>Copy time and values at this point</ContextMenuItem></ContextMenuContent></ContextMenu>
       {#if app.range}<SelectionCard range={app.range} viewRange={app.viewRange} {width} stats={app.stats}/>{/if}
-      {#if hoveredUart}<div class="uart-tooltip" style:left={Math.min(width-180,Math.max(4,x(hoveredUart.t)+8))+'px'} style:top={topOf('rx')-4+'px'} style:transform="translateY(-100%)"><time>{hoveredUart.t.toFixed(6)} s</time><span>{printable(hoveredUart.bytes)}</span><code>{hex(hoveredUart.bytes)}</code></div>{/if}
+      {#if hoveredUart}<div class="uart-tooltip" style:left={Math.min(width-180,Math.max(4,x(hoveredUart.t)+8))+'px'} style:top={topOf(UART_LANE)-4+'px'} style:transform="translateY(-100%)"><time>{hoveredUart.t.toFixed(6)} s</time><span>{printable(hoveredUart.bytes)}</span><code>{hex(hoveredUart.bytes)}</code></div>{/if}
     </div>
   </div>
 </section>

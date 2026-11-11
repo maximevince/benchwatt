@@ -2,9 +2,9 @@ import { toast } from 'svelte-sonner';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { documentDir, join } from '@tauri-apps/api/path';
-import { backend, type Alert, type Command, type Connection, type Monitor, type Settings, type RecordingInfo, type AllStats, type UartChunk, type Edge } from './backend';
+import { backend, type Alert, type Command, type Device, type DeviceState, type Monitor, type RecordingInfo, type AllStats, type UartChunk, type Edge } from './backend';
 import { describeAlert } from './alerts';
-import { channel } from './channels';
+import { defaultRecordChannels, lanesFor, orderedEntries, rxChannel } from './channels';
 
 // File dialogs open in the folder used last (per machine), else ~/Documents.
 const LAST_DIR_KEY = 'benchwatt.lastDir';
@@ -19,11 +19,15 @@ function rememberDir(path: string) {
 }
 
 export type AlertEntry = Alert & { key: number; time: string };
-const emptyMonitor = (): Monitor => ({ mv: null, mc: null, mp: null, vb: null, vj: null, tp: null, gpi: null, fourwire: null });
 class AppState {
-  connection = $state<Connection>({ connected: false });
-  settings = $state<Settings | null>(null);
-  monitor = $state<Monitor>(emptyMonitor());
+  devices = $state<Device[]>([]);
+  monitors = $state<Record<string, Monitor>>({});
+  selectedId = $state<string | null>(null);
+  /** The device whose panels the sidebar shows: the chosen one while it is present, else the first. */
+  selected = $derived(this.devices.find(d => d.desc.id === this.selectedId) ?? this.devices[0] ?? null);
+  monitor = $derived(this.selected ? this.monitors[this.selected.desc.id] ?? null : null);
+  /** Record channel choices per device id; a device without a choice records its defaults. */
+  recordChoice = $state<Record<string, string[]>>({});
   alerts = $state<AlertEntry[]>([]);
   busy = $state(false);
   error = $state('');
@@ -42,19 +46,22 @@ class AppState {
   showPower = $state(false);
   drawerOpen = $state(true);
   recording = $state<RecordingInfo | null>(null);
-  recordChannels = $state<string[]>(['mc', 'mv', 'mp']);
+  get recordChannels(): string[] { const d = this.selected; return d ? this.recordChoice[d.desc.id] ?? defaultRecordChannels(d.desc) : []; }
+  set recordChannels(channels: string[]) { const d = this.selected; if (d) this.recordChoice = { ...this.recordChoice, [d.desc.id]: channels }; }
+  /** Plot lanes of the current recording, from its own channel list. */
+  lanes = $derived(lanesFor(this.recording?.channels ?? []));
   hiddenLanes = $state<string[]>([]);
   range = $state<[number, number] | null>(null);
   viewRange = $state<[number, number]>([0, 10]);
   stats = $state<AllStats | null>(null);
   uart = $state<UartChunk[]>([]);
   edges = $state<Edge[]>([]);
-  uartOpen = $state(false);
+  get uartOpen() { return this.selected?.state?.uart_open ?? false; }
   private key = 0;
   private detailsSeq = 0;
   private statsSeq = 0;
   get darkTheme() { return this.theme === 'dark' || (this.theme === 'system' && this.systemDark); }
-  get disabled() { return !this.connection.connected || this.busy; }
+  get disabled() { return !this.selected?.state || this.busy; }
   initTheme() {
     const saved = localStorage.getItem('benchwatt-theme');
     this.theme = saved === 'light' || saved === 'dark' ? saved : 'system';
@@ -71,9 +78,9 @@ class AppState {
     const changed = (event: MediaQueryListEvent) => { this.systemDark = event.matches; if (this.theme === 'system') this.applyTheme(); };
     media.addEventListener('change', changed);
     const off = await Promise.all([
-      backend.listen('connection', value => { this.connection = value; if (!value.connected) { this.settings = null; this.monitor = emptyMonitor(); this.uartOpen = false; } }),
-      backend.listen('settings', value => { this.settings = value; }),
-      backend.listen('monitor', value => { this.monitor = value; }),
+      backend.listen('devices', value => this.setDevices(value)),
+      backend.listen('state', value => this.setState(value.device, value.state)),
+      backend.listen('monitor', value => { if (this.devices.some(d => d.desc.id === value.device)) this.monitors = { ...this.monitors, [value.device]: value }; }),
       backend.listen('alert', value => {
         const entry = { ...value, key: ++this.key, time: new Date().toLocaleTimeString() };
         this.alerts = [entry, ...this.alerts].slice(0, 100);
@@ -85,28 +92,44 @@ class AppState {
       backend.listen('recording', value => { if (this.recording?.active && this.fileName && value.duration_s > this.recording.duration_s) this.unsaved = true; this.recording = value; }),
     ]);
     try {
-      const snapshot = await backend.getState();
-      this.connection = snapshot.connection;
-      this.settings = snapshot.settings;
+      this.setDevices(await backend.getDevices());
       this.recording = await backend.recordingInfo();
     } catch (cause) { this.report(cause); }
     return () => { off.forEach(fn => fn()); media.removeEventListener('change', changed); };
   }
+  private setDevices(devices: Device[]) {
+    this.devices = devices;
+    const ids = new Set(devices.map(d => d.desc.id));
+    this.monitors = Object.fromEntries(Object.entries(this.monitors).filter(([id]) => ids.has(id)));
+    if (this.selectedId && !ids.has(this.selectedId)) this.selectedId = null;
+  }
+  private setState(id: string, state: DeviceState) { this.devices = this.devices.map(d => d.desc.id === id ? { ...d, state } : d); }
+  select(id: string) { this.selectedId = id; }
+  /** Applies a command to the selected device. */
   async command(name: Command, args: Record<string, unknown>) {
-    if (this.disabled) return false;
+    const device = this.selected?.desc.id;
+    if (this.disabled || !device) return false;
     this.busy = true; this.error = '';
-    try { this.settings = await backend.command(name, args); return true; }
+    try { this.setState(device, await backend.command(name, { ...args, device })); return true; }
     catch (cause) { this.report(cause); return false; }
     finally { this.busy = false; }
   }
   report(cause: unknown) { this.error = String(cause); toast.error(this.error); }
+  /** Toggles the first output of the selected device. */
+  async toggleOutput() {
+    const on = !this.selected?.state?.outputs[0]?.enabled, out = this.selected?.desc.outputs[0]?.n;
+    return out !== undefined && await this.command('set_output', { out, on }) ? on : null;
+  }
   async toggleRecording() {
     try {
       if (this.recording?.active) { this.recording = await backend.stopRecording(); return; }
+      const device = this.selected;
+      if (!device) return;
       if (!await this.confirmDiscard()) return;
-      // The Arc only streams rx with its UART enabled, so recording UART RX opens it.
-      if (this.recordChannels.includes('rx') && !this.uartOpen) await this.toggleUart();
-      this.recording = await backend.startRecording(this.recordChannels);
+      // A device may only stream received UART bytes with its UART open, so recording them opens it.
+      const rx = rxChannel(device.desc.channels);
+      if (device.desc.uart && rx && this.recordChannels.includes(rx.name) && !this.uartOpen) await this.toggleUart();
+      this.recording = await backend.startRecording(device.desc.id, this.recordChannels);
       this.hiddenLanes = [];
       this.range = null;
       this.viewRange = [0, 10];
@@ -151,9 +174,18 @@ class AppState {
   zoom(factor: number) { const [a,b] = this.viewRange; const mid=(a+b)/2, span=Math.max(.000001,(b-a)*factor); this.viewRange=[Math.max(0,mid-span/2), Math.max(span,mid+span/2)]; this.follow=false; }
   zoomFit() { this.viewRange=[0,Math.max(this.recording?.duration_s ?? 0,.001)]; this.follow=false; }
   centerUart(t: number) { const span=this.viewRange[1]-this.viewRange[0]; if (t < this.viewRange[0] || t > this.viewRange[1]) this.viewRange=[Math.max(0,t-span/2),Math.max(span,t+span/2)]; this.marker=t; this.focusedUartTime=t; }
-  async toggleUart() { try { if (this.uartOpen) await backend.uartClose(); else await backend.uartOpen(this.baud); this.uartOpen = !this.uartOpen; if (this.uartOpen) { this.drawerTab='uart'; this.drawerOpen=true; } } catch (cause) { this.report(cause); } }
+  async toggleUart() {
+    const device = this.selected; if (!device?.state || !device.desc.uart) return;
+    const id = device.desc.id, open = !device.state.uart_open;
+    try {
+      if (open) await backend.uartOpen(id, this.baud); else await backend.uartClose(id);
+      const state = this.devices.find(d => d.desc.id === id)?.state; if (state) this.setState(id, { ...state, uart_open: open });
+      if (open) { this.drawerTab='uart'; this.drawerOpen=true; }
+    } catch (cause) { this.report(cause); }
+  }
+  async uartSend(text: string) { const id = this.selected?.desc.id; if (!id) throw new Error('No device'); await backend.uartSend(id, text); }
   baud = $state(115200);
-  async copyStats() { if (!this.stats) return; const rows=[['channel','count','min','max','mean','rms','integral'].join('\t'),...Object.entries(this.stats.channels).map(([ch,s]) => [channel(ch).label,s.count,s.min,s.max,s.mean,s.rms,s.integral].join('\t'))]; await navigator.clipboard.writeText(rows.join('\n')); toast.success('Selection stats copied'); }
+  async copyStats() { if (!this.stats) return; const rows=[['channel','count','min','max','mean','rms','integral'].join('\t'),...orderedEntries(this.stats.channels, this.recording?.channels ?? []).map(([ch,s]) => [this.recording?.channels.find(c => c.name === ch)?.label ?? ch,s.count,s.min,s.max,s.mean,s.rms,s.integral].join('\t'))]; await navigator.clipboard.writeText(rows.join('\n')); toast.success('Selection stats copied'); }
   async refreshStats() {
     if (!this.recording || !this.range || this.range[0] === this.range[1]) return;
     const [t0, t1] = this.range, seq = ++this.statsSeq;

@@ -39,9 +39,3 @@ export function panFrom(range: Range, deltaPixels: number, width: number, durati
   const delta = deltaPixels / width * (range[1] - range[0]);
   return clampRange([range[0] - delta, range[1] - delta], duration, minimum);
 }
-
-export function activeGpi(edges: { mask: number }[]): number[] {
-  let changed = 0;
-  for (let i = 1; i < edges.length; i++) changed |= edges[i - 1].mask ^ edges[i].mask;
-  return [1, 2, 3, 4, 5, 6].filter(n => changed & (1 << (n - 1)));
-}

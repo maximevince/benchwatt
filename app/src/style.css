@@ -762,7 +762,6 @@ button:disabled {
 .lane-name {display:flex;align-items:center;gap:6px;}.lane-name small {color:var(--muted-foreground);font-size:10px;}
 .lane-value {font:11px "Geist Mono";white-space:nowrap;}.lane-mean {font:10px "Geist Mono";color:var(--muted-foreground);white-space:nowrap;}
 .lane-actions {position:absolute;right:5px;top:4px;display:flex;gap:2px;}.lane-actions button.active {color:var(--foreground);}
-.idle-lane,.idle-collapse {display:block;width:100%;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--muted-foreground);text-align:left;padding:3px 9px;font:10px "Geist Mono";cursor:pointer;}
 .plot-surface {position:relative;flex:none;}.uart-tooltip {position:absolute;z-index:5;display:flex;flex-direction:column;gap:2px;max-width:220px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--popover);color:var(--foreground);font:10px "Geist Mono";pointer-events:none;overflow-wrap:anywhere;}.uart-tooltip time {color:var(--muted-foreground);}
 .lane-label strong {font-weight:500;}.lane-label button {margin-left:auto;border:0;background:none;color:var(--muted-foreground);padding:0 3px;}
 .lane-current {margin-left:auto;color:var(--muted-foreground);font:10px "Geist Mono";}
@@ -837,3 +836,17 @@ button:disabled {
 .file-name { margin-left: 18px; padding-left: 14px; border-left: 1px solid var(--border); }
 [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="menubar-content"] { outline: none; }
 .gpo-title { margin-top: 16px; }
+
+/* Devices and description-driven sidebar parts. */
+.device-select { padding: 0; border: 0; background: none; border-radius: 9999px; cursor: pointer; }
+.device-select.selected [data-slot="badge"] { border-color: var(--foreground); }
+.topbar-right:has(.device-select.selected) .device-select:not(.selected) [data-slot="badge"] { opacity: .7; }
+.readout-set { margin-left: 7px; font: 500 9px "Geist Mono", monospace; letter-spacing: .06em; color: var(--muted-foreground); border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; }
+.setting-value { font: 12px "Geist Mono", monospace; font-variant-numeric: tabular-nums; }
+.supply-setting { margin-top: 9px; }
+.status-settings { margin-bottom: 11px; }
+.status-settings .mode-row { margin-top: 0; }
+.channel-more { display: flex; align-items: center; gap: 5px; min-height: 24px; padding: 0; border: 0; background: none; color: var(--muted-foreground); font-size: 11px; cursor: pointer; }
+.channel-more span { font: 10px "Geist Mono", monospace; }
+.gpi-list { flex-wrap: wrap; row-gap: 8px; }
+.gpi-item { white-space: nowrap; }
