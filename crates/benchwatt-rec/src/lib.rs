@@ -524,9 +524,25 @@ impl Recording {
             let (lo, hi) = mc.bounds(t0, t1);
             let mut j = 0.0;
             let mut found = false;
+            // Both channels run forward in time, so one cursor per channel
+            // replaces a search per sample.
+            let mut cp = mc.packets.partition_point(|p| p.first <= lo).max(1) - 1;
+            let mut vp = 0;
             for i in lo..hi {
-                if let Some(v) = mv.at(mc.time(i)) {
-                    j += mc.value(i) as f64 * v as f64 * mc.packet(i).dt;
+                while i >= mc.packets[cp].first + mc.packets[cp].len {
+                    cp += 1;
+                }
+                let c = mc.packets[cp];
+                let t = c.t + (i - c.first) as f64 * c.dt;
+                while vp + 1 < mv.packets.len() && mv.packets[vp + 1].t <= t {
+                    vp += 1;
+                }
+                let Some(&v) = mv.packets.get(vp).filter(|v| v.t <= t) else {
+                    continue;
+                };
+                let k = ((t - v.t) / v.dt).floor().max(0.0) as usize;
+                if k < v.len {
+                    j += mc.value(i) as f64 * mv.value(v.first + k) as f64 * c.dt;
                     found = true
                 }
             }

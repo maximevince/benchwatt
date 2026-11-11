@@ -58,6 +58,7 @@
   function formatTime(t: number, span: number) { return span < .01 ? (t*1e6).toFixed(0)+' µs' : span < 1 ? (t*1e3).toFixed(1)+' ms' : span < 120 ? t.toFixed(2)+' s' : (t/60).toFixed(2)+' min'; }
   function printable(bytes: number[]) { return bytes.map(byte => byte === 10 ? '↵' : byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : '·').join(''); }
   function hex(bytes: number[]) { return bytes.map(byte => byte.toString(16).padStart(2,'0').toUpperCase()).join(' '); }
+  let statsBusy = false;
   function schedule() { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; void fetchViews(); draw(); }); }
   async function fetchViews() {
     const [t0,t1] = app.viewRange;
@@ -70,12 +71,14 @@
         }
       }).catch(cause => app.report(cause)).finally(() => { inflight.delete(ch); if (app.viewRange[0] !== t0 || app.viewRange[1] !== t1) schedule(); });
     }
+    // One request at a time: while recording the view moves faster than a long range can be summed.
+    if (statsBusy) return; statsBusy = true;
     void backend.getStats(t0,t1).then(stats => {
       if (app.viewRange[0] === t0 && app.viewRange[1] === t1) {
         visibleMeans=Object.fromEntries(Object.entries(stats.channels).map(([ch,stat]) => [ch,stat.mean]));
         version++;
       }
-    }).catch(cause => app.report(cause));
+    }).catch(cause => app.report(cause)).finally(() => { statsBusy = false; if (app.viewRange[0] !== t0 || app.viewRange[1] !== t1) schedule(); });
     void app.refreshDetails();
   }
   function draw() {

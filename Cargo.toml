@@ -7,3 +7,7 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 version = "0.1.0"
 
+# The recording engine scans millions of samples for a plot or a statistic;
+# without optimisation a debug build of the app pegs a core while recording.
+[profile.dev.package.benchwatt-rec]
+opt-level = 3
