@@ -137,6 +137,8 @@
         min-=pad; max+=pad;
         if (!log && dataMin >= 0) min=Math.max(0,min);
         if (!log && dataMax <= 0) max=Math.min(0,max);
+        // A trace that sits at exactly zero (an output that is off) would otherwise get an empty range and not be drawn.
+        if (max <= min) max=min+1;
         const ticks=niceTicks(min,max,5);
         if (ticks.length > 1) [min,max]=[ticks[0],ticks.at(-1)!];
         scales[ch]=[min,max];
