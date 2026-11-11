@@ -1,5 +1,5 @@
 //! Streaming native recording archive. Packet boundaries preserve exact sample timing.
-use super::{ChannelDesc, Edge, Gap, Kind, Quantity, Recording, UartChunk};
+use super::{ChannelDesc, Edge, Gap, Kind, Recording, UartChunk};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::File,
@@ -72,35 +72,10 @@ fn safe_name(s: &str) -> bool {
 }
 #[derive(Serialize, Deserialize)]
 struct UartIndex {
-    #[serde(default = "rx_channel")]
     ch: u16,
     t: f64,
     offset: u64,
     len: usize,
-}
-// Version-1 files written before the index named its channel are all from an
-// Otii Arc, whose UART rx channel is 0x17.
-fn rx_channel() -> u16 {
-    0x17
-}
-// Version-1 files written before channels carried quantity, group and bits are
-// all from an Otii Arc; derive what charge, energy and logic export need.
-fn upgrade(s: &mut ChannelDesc) {
-    if s.quantity == Quantity::Other && s.group.is_empty() {
-        s.quantity = match s.unit.as_str() {
-            "A" => Quantity::Current,
-            "V" => Quantity::Voltage,
-            "W" => Quantity::Power,
-            "°C" => Quantity::Temperature,
-            _ => Quantity::Other,
-        };
-        if matches!(s.name.as_str(), "mc" | "mv" | "mp") {
-            s.group = "main".into();
-        }
-    }
-    if s.kind == Kind::Digital && s.bits == 0 {
-        s.bits = 2;
-    }
 }
 impl Recording {
     pub fn save(&self, path: impl AsRef<Path>, supplied: &Meta) -> io::Result<()> {
@@ -189,7 +164,6 @@ impl Recording {
         if meta.format_version != 1 {
             return Err(invalid("unsupported recording version"));
         }
-        meta.channels.iter_mut().for_each(|c| upgrade(&mut c.spec));
         meta.gaps.sort_by(|a, b| a.from.total_cmp(&b.from));
         let specs: Vec<_> = meta.channels.iter().map(|c| c.spec.clone()).collect();
         let mut rec = Self::new(&specs);
