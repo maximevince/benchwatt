@@ -89,7 +89,7 @@ fn model(name: &str) -> Option<Vec<Output>> {
             MAIN,
             MAIN,
             output(5.5, 1.1, 6.0, 1.2),
-            output(16.0, 1.1, 17.0, 1.2),
+            output(16.0, 1.1, 16.5, 1.2),
         ],
         _ => return None,
     })
