@@ -124,6 +124,10 @@ pub struct OutputDesc {
     pub voltage_steps: Vec<f64>,
     /// `None` when the limit cannot be set.
     pub current_limit: Option<Range>,
+    /// The colour the device itself marks this output with, as a plain colour
+    /// name ("yellow", "cyan", "magenta", "green", ...), so the screen can match
+    /// the front panel.
+    pub color: Option<String>,
 }
 /// A device-specific knob. Its value is a bool, one of the choices as a string,
 /// or a number, by `kind`.

@@ -431,6 +431,7 @@ impl Supply for Ppk2 {
             voltage: VOLTS,
             voltage_steps: Vec::new(),
             current_limit: None,
+            color: None,
         }]
     }
     fn set_voltage(&self, out: u8, volts: f64) -> Result<()> {

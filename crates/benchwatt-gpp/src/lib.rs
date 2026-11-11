@@ -94,6 +94,13 @@ fn model(name: &str) -> Option<Vec<Output>> {
         _ => return None,
     })
 }
+/// The colours of the channel markings on the front panel, where we know them.
+fn colors(model: &str) -> &'static [&'static str] {
+    match model {
+        "GPP-4323" => &["yellow", "cyan", "magenta", "green"],
+        _ => &[],
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Identity {
@@ -735,6 +742,9 @@ impl Supply for Gpp {
                 voltage: o.voltage,
                 voltage_steps: o.steps.to_vec(),
                 current_limit: o.current,
+                color: colors(&self.id.model)
+                    .get(usize::from(n) - 1)
+                    .map(|c| (*c).into()),
             })
             .collect()
     }

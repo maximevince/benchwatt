@@ -393,6 +393,7 @@ impl Supply for ArcDevice {
                 min: 0.001,
                 max: 3.0,
             }),
+            color: None,
         }]
     }
     fn set_voltage(&self, out: u8, volts: f64) -> Result<()> {
