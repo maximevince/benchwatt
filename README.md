@@ -51,13 +51,16 @@ means being in the `uucp` or `dialout` group:
 sudo usermod -aG uucp $USER   # or dialout on Debian/Ubuntu; log in again afterwards
 ```
 
-Run the app in development mode:
+Build the interface once, then run the app:
 
 ```sh
-cd app
-npm install
-npm run tauri dev
+cd app && npm install && npm run build && cd ..
+cargo run --bin benchwatt-app
 ```
+
+The interface in `app/dist` is built into the binary, so run `npm run build`
+again after changing anything under `app/src`. While working on the interface,
+`cd app && npm run tauri dev` is more convenient: it reloads as you edit.
 
 It finds the Arc on its own (USB ID `0fce:d1e6`) and reconnects when you plug
 it back in. `npm run tauri build` produces a `.deb` and an AppImage under
