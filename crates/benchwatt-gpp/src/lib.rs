@@ -772,7 +772,6 @@ impl Supply for Gpp {
         self.output(out)?;
         self.command(format!("{} {}", enable(out), if on { "ON" } else { "OFF" }))
     }
-    /// Without a settable limit the current limit reads 0.
     fn state(&self, out: u8) -> Result<OutputState> {
         let o = self.output(out)?;
         let mut lines = vec![format!("{}?", voltage(out)), format!("{}?", enable(out))];
@@ -781,9 +780,9 @@ impl Supply for Gpp {
         }
         let r = self.run(lines)?;
         Ok(OutputState {
-            voltage: number(&r[0])?,
+            voltage: Some(number(&r[0])?),
             enabled: on_off(&r[1])?,
-            current_limit: r.get(2).map_or(Ok(0.0), |s| number(s))?,
+            current_limit: r.get(2).map(|s| number(s)).transpose()?,
         })
     }
 }

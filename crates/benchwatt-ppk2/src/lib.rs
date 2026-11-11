@@ -35,7 +35,7 @@ const MODE: u8 = 0x11;
 const CALIBRATION: u8 = 0x19;
 const VOLTS: Range = Range { min: 0.8, max: 5.0 };
 const MODES: [&str; 2] = ["source", "ampere"];
-/// The unit's power-on voltage when the calibration reply does not say.
+/// The unit's power-on voltage, used for conversion until a voltage is set.
 const DEFAULT_MV: u16 = 3700;
 
 /// Serial ports of connected PPK2s. Each unit has two; only USB interface 1
@@ -112,6 +112,8 @@ pub struct Ppk2 {
     shared: Arc<Shared>,
     cal: Arc<Calibration>,
     serial: String,
+    /// The PPK2 cannot be asked for its voltage; it is known once we have sent one.
+    voltage_set: AtomicBool,
     output: Mutex<Output>,
     reader: Mutex<Option<Reader>>,
     stream: Mutex<Option<Streaming>>,
@@ -148,13 +150,10 @@ impl Ppk2 {
         let shared = Arc::new(Shared {
             writer: Mutex::new(Box::new(writer)),
             subscribers: Mutex::new(Vec::new()),
-            vdd_mv: AtomicU32::new(0),
+            vdd_mv: AtomicU32::new(DEFAULT_MV.into()),
             spike_filter: AtomicBool::new(true),
         });
         let cal = calibrate(&shared, &mut reader)?;
-        shared
-            .vdd_mv
-            .store(cal.vdd_mv.unwrap_or(DEFAULT_MV).into(), Ordering::Relaxed);
         Ok(Self {
             output: Mutex::new(Output {
                 enabled: false,
@@ -163,6 +162,7 @@ impl Ppk2 {
             shared,
             cal: Arc::new(cal),
             serial: String::new(),
+            voltage_set: AtomicBool::new(false),
             reader: Mutex::new(Some(reader)),
             stream: Mutex::new(None),
         })
@@ -445,6 +445,7 @@ impl Supply for Ppk2 {
         let [hi, lo] = mv.to_be_bytes();
         self.shared.write(&[VOLTAGE, hi, lo])?;
         self.shared.vdd_mv.store(mv.into(), Ordering::Relaxed);
+        self.voltage_set.store(true, Ordering::Relaxed);
         self.shared.broadcast(Event::Changed);
         Ok(())
     }
@@ -465,8 +466,11 @@ impl Supply for Ppk2 {
         check_out(out)?;
         Ok(OutputState {
             enabled: self.output.lock().unwrap().enabled,
-            voltage: f64::from(self.shared.vdd_mv.load(Ordering::Relaxed)) / 1000.0,
-            current_limit: 0.0,
+            voltage: self
+                .voltage_set
+                .load(Ordering::Relaxed)
+                .then(|| f64::from(self.shared.vdd_mv.load(Ordering::Relaxed)) / 1000.0),
+            current_limit: None,
         })
     }
 }

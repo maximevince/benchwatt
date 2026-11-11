@@ -334,14 +334,17 @@ fn state() {
     let (gpp, mock) = open(IDN_4323);
     let s = gpp.supply().unwrap();
     let st = s.state(1).unwrap();
-    assert_eq!((st.enabled, st.voltage, st.current_limit), (true, 5.0, 0.5));
+    assert_eq!(
+        (st.enabled, st.voltage, st.current_limit),
+        (true, Some(5.0), Some(0.5))
+    );
     let st = s.state(4).unwrap();
     assert_eq!(
         (st.enabled, st.voltage, st.current_limit),
-        (false, 3.0, 0.5)
+        (false, Some(3.0), Some(0.5))
     );
     s.set_voltage(2, 12.0).unwrap();
-    assert_eq!(s.state(2).unwrap().voltage, 12.0);
+    assert_eq!(s.state(2).unwrap().voltage, Some(12.0));
     assert!(s.state(5).is_err());
     let cmds = mock.commands();
     assert!(cmds.contains(&":SOURce1:VOLTage?".into()));

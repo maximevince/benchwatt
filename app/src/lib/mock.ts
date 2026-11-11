@@ -1,4 +1,6 @@
 import type { Backend, Command, Events, Device, DeviceDesc, DeviceState, ChannelDesc, Monitor, RecordingInfo, View, AllStats, UartChunk, Edge, Stats, OutputDesc, SettingDesc } from './backend';
+// A device that cannot report a setpoint leaves it null; the simulation then assumes 3.7 V and no limit.
+const setpoints = (sim: Sim, i: number) => { const o = sim.state.outputs[i]; return { enabled: o.enabled, voltage: o.voltage ?? 3.7, current_limit: o.current_limit ?? Infinity }; };
 import { settingError } from './channels';
 
 // Browser stand-in for the Tauri backend: simulates concrete devices through the same contract.
@@ -52,7 +54,7 @@ function arc(id: string): Sim {
     state: { outputs: [{ enabled: false, voltage: 3.3, current_limit: 0.3 }], settings: { current_mode: 'cutoff', io_voltage: 1.9, '5v_pin': false, '4wire': false }, gpo: [false, false], uart_open: false },
     phase: 0,
     monitor(sim) {
-      const out = sim.state.outputs[0], limitMode = sim.state.settings.current_mode === 'limit';
+      const out = setpoints(sim, 0), limitMode = sim.state.settings.current_mode === 'limit';
       // A short burst lasts one sample at the 10 Hz monitor rate, representing a 5 ms load event.
       if (sim.phase % 97 === 0) spike = 1;
       const voltage = out.enabled ? out.voltage + Math.sin(sim.phase / 27) * 0.0015 : 0;
@@ -61,7 +63,7 @@ function arc(id: string): Sim {
       if (out.enabled && current > out.current_limit) {
         if (!limitMode) {
           sim.state = { ...sim.state, outputs: [{ ...out, enabled: false }] };
-          emit('alert', { device: sim.desc.id, id: 6, name: 'main-overcurr' });
+          emit('alert', { device: sim.desc.id, id: 6, name: 'main-overcurr', title: 'Overcurrent', detail: 'Output switched off (cutoff mode).', severity: 'error' });
           emit('state', { device: sim.desc.id, state: sim.state });
           current = 0;
         } else current = out.current_limit;
@@ -86,9 +88,9 @@ function gpp(id: string): Sim {
     { key: `ovp${out.n}`, label: 'OVP', type: 'number' as const, min: 0, max: out.voltage.max + 1, unit: 'V', output: out.n, readonly: false },
     { key: `ocp${out.n}`, label: 'OCP', type: 'number' as const, min: 0, max: out.current_limit!.max + 0.1, unit: 'A', output: out.n, readonly: false },
   ]);
-  const load = (sim: Sim, i: number) => { const out = sim.state.outputs[i]; return out.enabled ? Math.min(out.voltage / loads[i], out.current_limit) : 0; };
+  const load = (sim: Sim, i: number) => { const out = setpoints(sim, i); return out.enabled ? Math.min(out.voltage / loads[i], out.current_limit) : 0; };
   const value = (sim: Sim, ch: string, noise: number) => {
-    const i = Number(ch.slice(2, 3)) - 1, out = sim.state.outputs[i], amps = load(sim, i) * (1 + noise), volts = out.enabled ? (amps >= out.current_limit && out.current_limit > 0 ? amps * loads[i] : out.voltage) : 0;
+    const i = Number(ch.slice(2, 3)) - 1, out = setpoints(sim, i), amps = load(sim, i) * (1 + noise), volts = out.enabled ? (amps >= out.current_limit && out.current_limit > 0 ? amps * loads[i] : out.voltage) : 0;
     return ch.endsWith('.v') ? volts : ch.endsWith('.i') ? amps : volts * amps;
   };
   return {
@@ -117,15 +119,15 @@ function ppk2(id: string): Sim {
     channel('v', 'Voltage', 'V', 'Analog', 'Voltage', 1000, { group: 'out', set: true }),
     channel('d', 'Digital', '', 'Digital', 'Other', 100000, { bits: 8 }),
   ];
-  const current = (sim: Sim, t: number) => sim.state.settings.mode === 'ampere' || sim.state.outputs[0].enabled ? (awake(t, 0.5, 0.01) ? 0.015 : 0.000003) * sim.state.outputs[0].voltage / 3 : 0;
+  const current = (sim: Sim, t: number) => sim.state.settings.mode === 'ampere' || sim.state.outputs[0].enabled ? (awake(t, 0.5, 0.01) ? 0.015 : 0.000003) * setpoints(sim, 0).voltage / 3 : 0;
   return {
     desc: { id, kind: 'ppk2', model: 'PPK2', serial: 'C2A1F7E5', firmware: '1.2.1', hardware: '2', channels, gpo: 0, uart: false,
       outputs: [{ n: 1, label: 'Source', group: 'out', voltage: { min: 0.8, max: 5 }, voltage_steps: [], current_limit: null }],
       settings: [{ key: 'mode', label: 'Mode', type: 'choice', options: ['source', 'ampere'], output: null, readonly: false }] },
-    state: { outputs: [{ enabled: false, voltage: 3, current_limit: 0 }], settings: { mode: 'source' }, gpo: [], uart_open: false },
+    state: { outputs: [{ enabled: false, voltage: null, current_limit: null }], settings: { mode: 'source' }, gpo: [], uart_open: false },
     phase: 0,
-    monitor: sim => ({ readings: { i: current(sim, sim.phase / 10 + Math.random() * 0.5), v: sim.state.outputs[0].voltage }, inputs: (sim.phase >> 3) & 0xff }),
-    sample: (sim, ch, t) => ch === 'i' ? current(sim, t) : sim.state.outputs[0].voltage,
+    monitor: sim => ({ readings: { i: current(sim, sim.phase / 10 + Math.random() * 0.5), v: setpoints(sim, 0).voltage }, inputs: (sim.phase >> 3) & 0xff }),
+    sample: (sim, ch, t) => ch === 'i' ? current(sim, t) : setpoints(sim, 0).voltage,
     edges: (_sim, t) => [{ t, mask: Math.round(t * 10) & 0xff }],
   };
 }

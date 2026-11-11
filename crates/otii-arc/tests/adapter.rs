@@ -243,7 +243,7 @@ fn events_are_translated() {
             Event::Reading { ch: 1, value } if (value - 3.3).abs() < 0.05 => mv = true,
             Event::Inputs(_) => inputs = true,
             Event::Changed => changed += 1,
-            Event::Alert { id, name } => {
+            Event::Alert { id, name, .. } => {
                 assert_eq!((id, name.as_str()), (6, "main-overcurr"));
                 break;
             }
@@ -388,7 +388,10 @@ fn get_set_and_errors() {
     supply.set_current_limit(1, 0.5).unwrap();
     let state = supply.state(1).unwrap();
     assert!(state.enabled);
-    assert!((state.voltage - 2.5).abs() < 1e-9 && (state.current_limit - 0.5).abs() < 1e-9);
+    assert!(
+        (state.voltage.unwrap() - 2.5).abs() < 1e-9
+            && (state.current_limit.unwrap() - 0.5).abs() < 1e-9
+    );
     check(supply.state(2).map(drop), ErrorKind::Invalid, "no output 2");
 
     let gpio = dev.gpio().unwrap();

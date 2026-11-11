@@ -144,12 +144,19 @@ pub enum SettingKind {
     Choice { options: Vec<String> },
     Number { min: f64, max: f64, unit: String },
 }
-/// Setpoints, not measurements.
+/// Setpoints, not measurements. `None` where the device cannot say: it has no
+/// such setting, or cannot be asked for it.
 #[derive(Clone, Copy, Debug, Serialize, PartialEq)]
 pub struct OutputState {
     pub enabled: bool,
-    pub voltage: f64,
-    pub current_limit: f64,
+    pub voltage: Option<f64>,
+    pub current_limit: Option<f64>,
+}
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Warning,
+    Error,
 }
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -163,9 +170,14 @@ pub enum Event {
     Inputs(u32),
     /// A setting or output state changed on the device; read it again.
     Changed,
+    /// Something the device reports on its own, worded by its driver.
     Alert {
         id: u16,
+        /// Short and stable, for scripts and logs.
         name: String,
+        title: String,
+        detail: String,
+        severity: Severity,
     },
 }
 

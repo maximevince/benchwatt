@@ -171,7 +171,7 @@ fn open_stops_discards_and_reads_calibration() {
     assert_eq!(info.details["IA"], 59.0);
     assert_eq!(ppk.get("mode").unwrap(), "source");
     let s = ppk.state(1).unwrap();
-    assert_eq!((s.enabled, s.voltage, s.current_limit), (false, 3.7, 0.0));
+    assert_eq!((s.enabled, s.voltage, s.current_limit), (false, None, None));
 }
 
 #[test]
@@ -236,7 +236,7 @@ fn commands() {
     port.clear();
     ppk.set_voltage(1, 3.3).unwrap();
     assert_eq!(port.written(), [0x0D, 0x0C, 0xE4]);
-    assert_eq!(ppk.state(1).unwrap().voltage, 3.3);
+    assert_eq!(ppk.state(1).unwrap().voltage, Some(3.3));
     port.clear();
     ppk.set_enabled(1, true).unwrap();
     ppk.set_enabled(1, false).unwrap();

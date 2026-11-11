@@ -3,7 +3,6 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { documentDir, join } from '@tauri-apps/api/path';
 import { backend, type Alert, type Command, type Device, type DeviceState, type Monitor, type RecordingInfo, type AllStats, type UartChunk, type Edge } from './backend';
-import { describeAlert } from './alerts';
 import { defaultRecordChannels, lanesFor, orderedEntries, rxChannel } from './channels';
 
 // File dialogs open in the folder used last (per machine), else ~/Documents.
@@ -84,9 +83,8 @@ class AppState {
       backend.listen('alert', value => {
         const entry = { ...value, key: ++this.key, time: new Date().toLocaleTimeString() };
         this.alerts = [entry, ...this.alerts].slice(0, 100);
-        const details = describeAlert(value.id);
-        const message = `${details.title}: ${details.description}`;
-        if (details.severity === 'warning') toast.warning(message);
+        const message = `${value.title}: ${value.detail}`;
+        if (value.severity === 'warning') toast.warning(message);
         else toast.error(message);
       }),
       backend.listen('recording', value => { if (this.recording?.active && this.fileName && value.duration_s > this.recording.duration_s) this.unsaved = true; this.recording = value; }),

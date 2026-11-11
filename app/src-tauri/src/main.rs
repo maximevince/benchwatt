@@ -2,7 +2,7 @@ use benchwatt_session::{
     Capture, Found,
     device::{
         ChannelDesc, Device, Error, ErrorKind, Event, Kind, OutputDesc, OutputState, SettingDesc,
-        SettingKind, Supply, Value,
+        SettingKind, Severity, Supply, Value,
     },
     rec::{self, Recording, View, export, file},
 };
@@ -89,6 +89,9 @@ struct Alert<'a> {
     device: &'a str,
     id: u16,
     name: String,
+    title: String,
+    detail: String,
+    severity: Severity,
 }
 #[derive(Clone, Serialize)]
 struct RecordingInfo {
@@ -746,9 +749,22 @@ fn device_worker(app: AppHandle, open: Arc<Open>, events: Receiver<Event>) {
                 dirty |= monitor.inputs.replace(mask) != Some(mask);
             }
             Ok(Event::Changed) => reread = Some(false),
-            Ok(Event::Alert { id, name }) => {
-                let device = &open.id;
-                let _ = app.emit("alert", Alert { device, id, name });
+            Ok(Event::Alert {
+                id,
+                name,
+                title,
+                detail,
+                severity,
+            }) => {
+                let alert = Alert {
+                    device: &open.id,
+                    id,
+                    name,
+                    title,
+                    detail,
+                    severity,
+                };
+                let _ = app.emit("alert", alert);
                 reread = Some(true);
             }
             Err(RecvTimeoutError::Timeout) => {}

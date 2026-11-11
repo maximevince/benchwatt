@@ -6,7 +6,8 @@ use crate::{
 };
 use benchwatt_device::{
     Block, ChannelDesc, Data, Device, DeviceInfo, Error, ErrorKind, Event, Gpio, Kind, Meter,
-    OutputDesc, OutputState, Range, Result, SettingDesc, SettingKind, Supply, Uart, Value,
+    OutputDesc, OutputState, Range, Result, SettingDesc, SettingKind, Severity, Supply, Uart,
+    Value,
 };
 use std::sync::{
     Arc as StdArc, Mutex,
@@ -56,10 +57,16 @@ impl Shared {
                 *self.four_wire.lock().unwrap() = Some(*v != 0);
                 Event::Changed
             }
-            device::Event::Alert { id, name } => Event::Alert {
-                id: *id,
-                name: (*name).into(),
-            },
+            device::Event::Alert { id, name } => {
+                let (title, detail, severity) = alert_text(*id);
+                Event::Alert {
+                    id: *id,
+                    name: (*name).into(),
+                    title: title.into(),
+                    detail: detail.into(),
+                    severity,
+                }
+            }
             device::Event::Disconnected => {
                 // Dropping the sink tells whoever reads the stream that it is over.
                 *self.stream.lock().unwrap() = None;
@@ -404,8 +411,8 @@ impl Supply for ArcDevice {
         check_out(out)?;
         Ok(OutputState {
             enabled: number(&self.arc.get_value(9)?)? != 0.0,
-            voltage: number(&self.arc.get_value(11)?)?,
-            current_limit: number(&self.arc.get_value(12)?)?,
+            voltage: Some(number(&self.arc.get_value(11)?)?),
+            current_limit: Some(number(&self.arc.get_value(12)?)?),
         })
     }
 }
@@ -455,5 +462,73 @@ impl Uart for ArcDevice {
     }
     fn tx(&self) -> u16 {
         0x19
+    }
+}
+
+/// How the app words an alert the Arc sends by number.
+fn alert_text(id: u16) -> (&'static str, &'static str, Severity) {
+    use Severity::{Error, Warning};
+    match id {
+        1 => (
+            "Overtemperature",
+            "Device temperature exceeded the safe limit.",
+            Error,
+        ),
+        2 => (
+            "VBUS undervoltage",
+            "VBUS voltage is below the expected level.",
+            Warning,
+        ),
+        3 => (
+            "DC input overvoltage",
+            "DC input voltage exceeded the safe limit.",
+            Error,
+        ),
+        4 => (
+            "Voltage calibration failed",
+            "Voltage calibration could not be completed.",
+            Error,
+        ),
+        5 => (
+            "Output overvoltage",
+            "Output voltage exceeded the configured limit.",
+            Error,
+        ),
+        6 => ("Overcurrent", "Output switched off (cutoff mode).", Error),
+        7 => (
+            "Load switch overload",
+            "The load switch exceeded its safe operating limit.",
+            Error,
+        ),
+        8 => (
+            "DC/DC overload",
+            "The DC/DC converter exceeded its safe operating limit.",
+            Error,
+        ),
+        9 => (
+            "Pre-regulator overload",
+            "The pre-regulator exceeded its safe operating limit.",
+            Error,
+        ),
+        10 => (
+            "Sink overload",
+            "The sink exceeded its safe operating limit.",
+            Error,
+        ),
+        11 => (
+            "Negative internal resistance",
+            "The device detected negative internal resistance.",
+            Error,
+        ),
+        12 => (
+            "Bad firmware",
+            "The device firmware is invalid or incompatible.",
+            Error,
+        ),
+        _ => (
+            "Device alert",
+            "The device reported an alert this app has no description for.",
+            Error,
+        ),
     }
 }

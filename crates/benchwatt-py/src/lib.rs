@@ -213,7 +213,7 @@ impl PyArc {
         loop {
             let e = self.rx.lock().unwrap().try_recv();
             match e {
-                Ok(Event::Alert { id, name }) => self.alerts.push((id, name)),
+                Ok(Event::Alert { id, name, .. }) => self.alerts.push((id, name)),
                 Ok(Event::Reading { ch, value }) => {
                     if let Some(c) = channels.iter().find(|c| c.id == ch) {
                         self.latest.insert(c.name.clone(), value);
@@ -330,11 +330,11 @@ impl PyArc {
     }
     #[getter]
     fn voltage(&self) -> PyResult<f64> {
-        Ok(self.state()?.voltage)
+        need(self.state()?.voltage, "voltage setpoint")
     }
     #[getter]
     fn current_limit(&self) -> PyResult<f64> {
-        Ok(self.state()?.current_limit)
+        need(self.state()?.current_limit, "current limit")
     }
     fn set_gpo(&self, n: u8, on: bool) -> PyResult<()> {
         need(self.dev()?.gpio(), "GPIO")?
