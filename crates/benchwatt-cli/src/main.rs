@@ -28,6 +28,42 @@ struct Cli {
     #[command(subcommand)]
     command: Command,
 }
+/// Powering the target for the length of one measurement.
+#[derive(clap::Args, Default)]
+struct Powered {
+    /// Set this voltage before measuring.
+    #[arg(long)]
+    volt: Option<String>,
+    /// Set this current limit before measuring.
+    #[arg(long)]
+    ilim: Option<String>,
+    /// Switch the output on for the measurement and off again afterwards.
+    #[arg(long)]
+    on: bool,
+    /// Which output; needed when the supply has more than one.
+    #[arg(long)]
+    out: Option<u8>,
+    /// How long to wait after switching on before measuring.
+    #[arg(long, requires = "on")]
+    settle: Option<String>,
+}
+impl Powered {
+    fn used(&self) -> bool {
+        self.volt.is_some() || self.ilim.is_some() || self.on
+    }
+    fn validate(&self) -> Result<()> {
+        if let Some(v) = &self.volt {
+            value_unit(v, "V")?;
+        }
+        if let Some(a) = &self.ilim {
+            value_unit(a, "A")?;
+        }
+        if let Some(t) = &self.settle {
+            duration(t)?;
+        }
+        Ok(())
+    }
+}
 #[derive(Subcommand)]
 enum Command {
     /// List the supported devices that are plugged in.
@@ -60,6 +96,8 @@ enum Command {
         duration: String,
         #[arg(long = "assert")]
         assertions: Vec<String>,
+        #[command(flatten)]
+        power: Powered,
     },
     Record {
         #[arg(long)]
@@ -74,6 +112,8 @@ enum Command {
         uart: Option<u32>,
         #[arg(long)]
         gpi: bool,
+        #[command(flatten)]
+        power: Powered,
     },
     Convert {
         input: String,
@@ -273,15 +313,44 @@ fn capture(
     gpi: bool,
     uart: Option<u32>,
     for_time: Duration,
+    power: &Powered,
 ) -> Result<Recording> {
     let run = stop_flag()?;
-    let (capture, mut rec) = dev(Capture::start(d, &names(ch), gpi, uart))?;
-    let deadline = Instant::now() + for_time;
-    while run.load(Ordering::Relaxed)
-        && Instant::now() < deadline
-        && capture.pump(&mut rec, Duration::from_millis(50))
-    {}
-    dev(capture.stop(d, &mut rec))?;
+    let mut switched = None;
+    if power.used() {
+        let supply = supply(d)?;
+        let out = output(supply, power.out)?;
+        if let Some(v) = &power.volt {
+            dev(supply.set_voltage(out, value_unit(v, "V")?))?;
+        }
+        if let Some(a) = &power.ilim {
+            dev(supply.set_current_limit(out, value_unit(a, "A")?))?;
+        }
+        if power.on {
+            dev(supply.set_enabled(out, true))?;
+            switched = Some((supply, out));
+        }
+    }
+    // Whatever happens from here on, the output we switched on goes off again.
+    let measured = (|| {
+        if let Some(t) = &power.settle {
+            let until = Instant::now() + duration(t)?;
+            while run.load(Ordering::Relaxed) && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let (capture, mut rec) = dev(Capture::start(d, &names(ch), gpi, uart))?;
+        let deadline = Instant::now() + for_time;
+        while run.load(Ordering::Relaxed)
+            && Instant::now() < deadline
+            && capture.pump(&mut rec, Duration::from_millis(50))
+        {}
+        dev(capture.stop(d, &mut rec))?;
+        Ok(rec)
+    })();
+    let off = switched.map_or(Ok(()), |(supply, out)| dev(supply.set_enabled(out, false)));
+    let rec = measured?;
+    off?;
     Ok(rec)
 }
 fn stats_value(rec: &Recording, from: f64, to: f64) -> Value {
@@ -376,7 +445,9 @@ fn validate_live(command: &Command) -> Result<()> {
             ch,
             duration: d,
             assertions,
+            power,
         } => {
+            power.validate()?;
             duration(d)?;
             let names = names(ch);
             for raw in assertions {
@@ -400,8 +471,10 @@ fn validate_live(command: &Command) -> Result<()> {
             duration: d,
             secs,
             output,
+            power,
             ..
         } => {
+            power.validate()?;
             if let Some(d) = d {
                 duration(d)?;
             } else if secs.is_none() {
@@ -538,8 +611,9 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
             ch,
             duration: t,
             assertions,
+            power,
         } => {
-            let rec = capture(d, &ch, false, None, duration(&t)?)?;
+            let rec = capture(d, &ch, false, None, duration(&t)?, &power)?;
             let (mut summary, mut code) = (stats_value(&rec, 0.0, rec.duration()), 0);
             let (reports, all) = check_assertions(&rec, &assertions)?;
             summary["assertions"] = reports;
@@ -555,6 +629,7 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
             output,
             uart,
             gpi,
+            power,
         } => {
             let duration = if let Some(t) = t {
                 duration(&t)?
@@ -563,7 +638,7 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
             } else {
                 return Err(Failure::usage("--duration required"));
             };
-            let rec = capture(d, &ch, gpi, uart, duration)?;
+            let rec = capture(d, &ch, gpi, uart, duration, &power)?;
             write_format(&rec, &output, &benchwatt_session::meta(d))?;
             json!({"output":output,"duration_s":rec.duration(),"samples":rec.sample_counts(),"gaps":rec.gaps()})
         }

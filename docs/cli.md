@@ -2,7 +2,7 @@
 
 Build with `cargo build -p benchwatt-cli`; the binary is `target/debug/benchwatt`. `benchwatt devices` lists the supported devices that are plugged in. Live commands use the one that is connected; with several, pick one by kind with `--device arc`. A device that cannot be found by its USB id is named with its port, `--device arc@/dev/ttyACM0`.
 
-`power` sets a supply output: `--volt`, `--ilim`, and `on` or `off`. On a supply with several outputs it needs `--out N`; with a single output that one is used. Without anything to set, `power` lists the outputs with their state and setpoints. Settings that only some devices have, such as the Arc's current mode, go through `get` and `set`. `convert` and `stats` work entirely offline.
+`power` sets a supply output: `--volt`, `--ilim`, and `on` or `off`. On a supply with several outputs it needs `--out N`; with a single output that one is used. Without anything to set, `power` lists the outputs with their state and setpoints. `measure` and `record` take the same `--volt`, `--ilim` and `--out`, plus `--on`, which switches the output on for the measurement and off again afterwards, also when the measurement fails or is interrupted. `--settle 500ms` waits after switching on before the first sample. The PPK2 needs this form: it switches its output off whenever the serial port is closed, so a separate `power on` does not last until the next command. Settings that only some devices have, such as the Arc's current mode, go through `get` and `set`. `convert` and `stats` work entirely offline.
 
 ## Scripting
 
@@ -16,6 +16,7 @@ benchwatt power --volt 3.3V --ilim 200mA on
 benchwatt set current_mode limit
 benchwatt --device gpp power --out 2 --volt 5V --ilim 500mA on
 benchwatt --device gpp power
+benchwatt --device ppk2 measure --ch i --duration 5s --volt 1.8V --on --settle 1s
 benchwatt power off
 benchwatt measure --ch mc,mv,mp --duration 10s --assert 'mc.mean<50uA' --assert 'mc.max<=200mA'
 benchwatt record --ch mc,mv,mp --duration 10s -o run.bwrec
