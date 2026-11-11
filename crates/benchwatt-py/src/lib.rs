@@ -1,6 +1,6 @@
 use benchwatt_session::{
     Capture,
-    device::{Device, Error, ErrorKind, Event, Kind, OutputState, Value},
+    device::{Device, Error, ErrorKind, Event, Kind, OutputState, Supply, Value},
     rec::{Recording as NativeRecording, export, file::Meta},
 };
 use numpy::PyArray1;
@@ -10,11 +10,15 @@ use pyo3::{
     prelude::*,
     types::{PyBytes, PyDict},
 };
+use serde_json::json;
 use std::{
     collections::HashMap,
     sync::{Mutex, mpsc::Receiver},
     time::{Duration, Instant},
 };
+
+#[cfg(feature = "testing")]
+mod testing;
 
 type SampleArrays<'py> = (Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f32>>);
 
@@ -35,6 +39,22 @@ fn need<T>(cap: Option<T>, what: &str) -> PyResult<T> {
 fn file_error(e: std::io::Error) -> PyErr {
     pyo3::exceptions::PyOSError::new_err(e.to_string())
 }
+/// Plain Python dicts, lists and numbers from a device value or description.
+fn to_py(py: Python<'_>, v: &Value) -> PyResult<Py<PyAny>> {
+    Ok(py
+        .import("json")?
+        .call_method1("loads", (v.to_string(),))?
+        .unbind())
+}
+fn from_py(v: &Bound<'_, PyAny>) -> PyResult<Value> {
+    let text: String = v
+        .py()
+        .import("json")?
+        .call_method1("dumps", (v,))?
+        .extract()?;
+    text.parse()
+        .map_err(|e: serde_json::Error| PyValueError::new_err(e.to_string()))
+}
 fn bounds(duration: f64, t0: Option<f64>, t1: Option<f64>) -> PyResult<(f64, f64)> {
     let (from, to) = (t0.unwrap_or(0.0), t1.unwrap_or(duration));
     if !from.is_finite() || !to.is_finite() || from < 0.0 || to < from {
@@ -42,12 +62,15 @@ fn bounds(duration: f64, t0: Option<f64>, t1: Option<f64>) -> PyResult<(f64, f64
     }
     Ok((from, to))
 }
-fn channel(rec: &NativeRecording, name: &str) -> PyResult<u16> {
+fn channel(rec: &NativeRecording, name: &str, kind: Kind) -> PyResult<u16> {
     rec.specs()
         .iter()
-        .find(|s| s.name == name && s.kind == Kind::Analog)
+        .find(|s| s.name == name && s.kind == kind)
         .map(|s| s.id)
-        .ok_or_else(|| PyValueError::new_err(format!("unknown analog channel {name}")))
+        .ok_or_else(|| {
+            let kind = format!("{kind:?}").to_lowercase();
+            PyValueError::new_err(format!("unknown {kind} channel {name}"))
+        })
 }
 
 #[pyclass(name = "Recording", module = "benchwatt")]
@@ -89,7 +112,7 @@ impl PyRecording {
         t0: Option<f64>,
         t1: Option<f64>,
     ) -> PyResult<SampleArrays<'py>> {
-        let id = channel(&self.rec, name)?;
+        let id = channel(&self.rec, name, Kind::Analog)?;
         let (from, to) = bounds(self.duration(), t0, t1)?;
         let (t, v) = self.rec.analog_data(id, from, to).unwrap();
         Ok((PyArray1::from_vec(py, t), PyArray1::from_vec(py, v)))
@@ -102,7 +125,7 @@ impl PyRecording {
         t0: Option<f64>,
         t1: Option<f64>,
     ) -> PyResult<Option<Py<PyAny>>> {
-        let id = channel(&self.rec, name)?;
+        let id = channel(&self.rec, name, Kind::Analog)?;
         let (from, to) = bounds(self.duration(), t0, t1)?;
         let Some(s) = self.rec.stats(id, from, to) else {
             return Ok(None);
@@ -155,21 +178,19 @@ impl PyRecording {
         }
         Ok(out.into_any().unbind())
     }
-    #[pyo3(signature = (t0=None, t1=None))]
-    fn uart(
+    #[pyo3(signature = (name, t0=None, t1=None))]
+    fn bytes(
         &self,
         py: Python<'_>,
+        name: &str,
         t0: Option<f64>,
         t1: Option<f64>,
     ) -> PyResult<Vec<(f64, Py<PyBytes>)>> {
+        let id = channel(&self.rec, name, Kind::Bytes)?;
         let (from, to) = bounds(self.duration(), t0, t1)?;
-        let rx = self
+        Ok(self
             .rec
-            .specs()
-            .into_iter()
-            .find(|s| s.name == "rx" && s.kind == Kind::Bytes);
-        Ok(rx
-            .map_or(Vec::new(), |s| self.rec.bytes(s.id, from, to))
+            .bytes(id, from, to)
             .into_iter()
             .map(|u| (u.t, PyBytes::new(py, &u.bytes).unbind()))
             .collect())
@@ -189,41 +210,86 @@ impl PyRecording {
     }
 }
 
-#[pyclass(name = "Arc", module = "benchwatt")]
-struct PyArc {
+#[pyclass(name = "Device", module = "benchwatt")]
+struct PyDevice {
     dev: Option<Box<dyn Device>>,
     rx: Mutex<Receiver<Event>>,
     recording: Option<(Mutex<Capture>, NativeRecording)>,
-    alerts: Vec<(u16, String)>,
+    alerts: Vec<Value>,
     latest: HashMap<String, f32>,
 }
-impl PyArc {
+impl PyDevice {
+    fn new(dev: Box<dyn Device>) -> Self {
+        let rx = dev.events();
+        Self {
+            dev: Some(dev),
+            rx: Mutex::new(rx),
+            recording: None,
+            alerts: Vec::new(),
+            latest: HashMap::new(),
+        }
+    }
     fn dev(&self) -> PyResult<&dyn Device> {
         self.dev
             .as_deref()
-            .ok_or_else(|| DeviceError::new_err("Arc is closed"))
+            .ok_or_else(|| DeviceError::new_err("device is closed"))
     }
-    fn state(&self) -> PyResult<OutputState> {
-        need(self.dev()?.supply(), "supply")?
-            .state(1)
-            .map_err(device_error)
+    fn supply(&self) -> PyResult<&dyn Supply> {
+        need(self.dev()?.supply(), "supply output")
+    }
+    /// The output a call acts on: the one named, or the only one there is.
+    fn output_n(&self, out: Option<u8>) -> PyResult<(&dyn Supply, u8)> {
+        let supply = self.supply()?;
+        if let Some(n) = out {
+            return Ok((supply, n));
+        }
+        match supply.outputs().as_slice() {
+            [only] => Ok((supply, only.n)),
+            all => {
+                let labels: Vec<_> = all
+                    .iter()
+                    .map(|o| format!("{} ({})", o.n, o.label))
+                    .collect();
+                Err(PyValueError::new_err(format!(
+                    "this supply has several outputs, pick one with out=: {}",
+                    labels.join(", ")
+                )))
+            }
+        }
+    }
+    fn state(&self, out: Option<u8>) -> PyResult<OutputState> {
+        let (supply, n) = self.output_n(out)?;
+        supply.state(n).map_err(device_error)
     }
     fn drain(&mut self) {
         let channels = self.dev.as_ref().map_or(Vec::new(), |d| d.channels());
         loop {
             let e = self.rx.lock().unwrap().try_recv();
-            match e {
-                Ok(Event::Alert { id, name, .. }) => self.alerts.push((id, name)),
+            let reading = match e {
+                Ok(Event::Alert {
+                    id,
+                    name,
+                    title,
+                    detail,
+                    severity,
+                }) => {
+                    self.alerts
+                        .push(json!({"id": id, "name": name, "title": title,
+                        "detail": detail, "severity": severity}));
+                    continue;
+                }
                 Ok(Event::Reading { ch, value }) => {
-                    if let Some(c) = channels.iter().find(|c| c.id == ch) {
-                        self.latest.insert(c.name.clone(), value);
-                    }
+                    channels.iter().find(|c| c.id == ch).zip(Some(value))
                 }
-                Ok(Event::Inputs(mask)) => {
-                    self.latest.insert("gpi".into(), mask as f32);
-                }
-                Ok(_) => (),
+                Ok(Event::Inputs(mask)) => channels
+                    .iter()
+                    .find(|c| c.kind == Kind::Digital)
+                    .zip(Some(mask as f32)),
+                Ok(_) => None,
                 Err(_) => break,
+            };
+            if let Some((c, value)) = reading {
+                self.latest.insert(c.name.clone(), value);
             }
         }
     }
@@ -241,23 +307,7 @@ impl PyArc {
     }
 }
 #[pymethods]
-impl PyArc {
-    #[new]
-    #[pyo3(signature = (port=None))]
-    fn new(port: Option<&str>) -> PyResult<Self> {
-        let arc = port.map_or("arc".into(), |p| format!("arc@{p}"));
-        let found = benchwatt_session::select(Some(&arc))
-            .map_err(|_| DeviceError::new_err("no Arc serial port found"))?;
-        let dev = benchwatt_session::open(&found).map_err(device_error)?;
-        let rx = dev.events();
-        Ok(Self {
-            dev: Some(dev),
-            rx: Mutex::new(rx),
-            recording: None,
-            alerts: Vec::new(),
-            latest: HashMap::new(),
-        })
-    }
+impl PyDevice {
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
@@ -278,66 +328,76 @@ impl PyArc {
     }
     #[getter]
     fn info(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let dev = self.dev()?;
-        let i = dev.info();
-        let d = PyDict::new(py);
-        for (name, value) in [
-            ("name", i.model),
-            ("fw", i.firmware),
-            ("hw", i.hardware),
-            ("uid", i.serial),
+        let i = self.dev()?.info();
+        let mut out = serde_json::Map::new();
+        for (key, value) in [
+            ("kind", i.kind),
+            ("model", i.model),
+            ("serial", i.serial),
+            ("firmware", i.firmware),
+            ("hardware", i.hardware),
         ] {
-            d.set_item(name, (!value.is_empty()).then_some(value))?;
+            out.insert(key.into(), json!((!value.is_empty()).then_some(value)));
         }
-        d.set_item(
-            "protocol",
-            i.details.get("protocol").and_then(Value::as_u64),
-        )?;
-        let mut channels: Vec<_> = dev.channels().into_iter().map(|c| c.name).collect();
-        channels.sort();
-        d.set_item("channels", channels)?;
-        Ok(d.into_any().unbind())
+        out.extend(i.details);
+        to_py(py, &Value::Object(out))
     }
-    fn set_voltage(&self, volts: f64) -> PyResult<()> {
-        need(self.dev()?.supply(), "supply")?
-            .set_voltage(1, volts)
-            .map_err(device_error)
+    #[getter]
+    fn channels(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        to_py(py, &json!(self.dev()?.channels()))
     }
-    fn set_current_limit(&self, amps: f64) -> PyResult<()> {
-        need(self.dev()?.supply(), "supply")?
-            .set_current_limit(1, amps)
-            .map_err(device_error)
+    #[getter]
+    fn outputs(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let outputs = self.dev()?.supply().map_or(Vec::new(), |s| s.outputs());
+        to_py(py, &json!(outputs))
     }
-    fn set_current_mode(&self, mode: &str) -> PyResult<()> {
-        let id = match mode {
-            "cutoff" => 0,
-            "limit" => 1,
-            _ => return Err(PyValueError::new_err("mode must be cutoff or limit")),
-        };
-        self.dev()?
-            .set("mainsrccurrmode", id.into())
-            .map_err(device_error)
+    #[getter]
+    fn settings(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        to_py(py, &json!(self.dev()?.settings()))
+    }
+    fn get(&self, py: Python<'_>, key: &str) -> PyResult<Py<PyAny>> {
+        to_py(py, &self.dev()?.get(key).map_err(device_error)?)
+    }
+    fn set(&self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.dev()?.set(key, from_py(value)?).map_err(device_error)
+    }
+    #[pyo3(signature = (volts, out=None))]
+    fn set_voltage(&self, volts: f64, out: Option<u8>) -> PyResult<()> {
+        let (supply, n) = self.output_n(out)?;
+        supply.set_voltage(n, volts).map_err(device_error)
+    }
+    #[pyo3(signature = (amps, out=None))]
+    fn set_current_limit(&self, amps: f64, out: Option<u8>) -> PyResult<()> {
+        let (supply, n) = self.output_n(out)?;
+        supply.set_current_limit(n, amps).map_err(device_error)
+    }
+    #[pyo3(signature = (on, out=None))]
+    fn set_output(&self, on: bool, out: Option<u8>) -> PyResult<()> {
+        let (supply, n) = self.output_n(out)?;
+        supply.set_enabled(n, on).map_err(device_error)
+    }
+    #[pyo3(signature = (out=None))]
+    fn output_state(&self, py: Python<'_>, out: Option<u8>) -> PyResult<Py<PyAny>> {
+        to_py(py, &json!(self.state(out)?))
     }
     #[getter]
     fn output(&self) -> PyResult<bool> {
-        Ok(self.state()?.enabled)
+        Ok(self.state(None)?.enabled)
     }
-    #[setter]
-    fn set_output(&self, on: bool) -> PyResult<()> {
-        need(self.dev()?.supply(), "supply")?
-            .set_enabled(1, on)
-            .map_err(device_error)
+    #[setter(output)]
+    fn set_only_output(&self, on: bool) -> PyResult<()> {
+        self.set_output(on, None)
     }
     #[getter]
-    fn voltage(&self) -> PyResult<f64> {
-        need(self.state()?.voltage, "voltage setpoint")
+    fn voltage(&self) -> PyResult<Option<f64>> {
+        Ok(self.state(None)?.voltage)
     }
     #[getter]
-    fn current_limit(&self) -> PyResult<f64> {
-        need(self.state()?.current_limit, "current limit")
+    fn current_limit(&self) -> PyResult<Option<f64>> {
+        Ok(self.state(None)?.current_limit)
     }
     fn set_gpo(&self, n: u8, on: bool) -> PyResult<()> {
-        need(self.dev()?.gpio(), "GPIO")?
+        need(self.dev()?.gpio(), "digital outputs")?
             .set_output(n, on)
             .map_err(device_error)
     }
@@ -347,51 +407,61 @@ impl PyArc {
     }
     fn alerts(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.drain();
-        let out = pyo3::types::PyList::empty(py);
-        for (id, name) in self.alerts.drain(..) {
-            let d = PyDict::new(py);
-            d.set_item("id", id)?;
-            d.set_item("name", name)?;
-            out.append(d)?;
-        }
-        Ok(out.into_any().unbind())
+        to_py(py, &Value::Array(std::mem::take(&mut self.alerts)))
     }
     fn uart_open(&self, baud: u32) -> PyResult<()> {
         need(self.dev()?.uart(), "UART")?
             .open(baud)
             .map_err(device_error)
     }
-    fn uart_write(&self, bytes: &[u8]) -> PyResult<()> {
-        need(self.dev()?.uart(), "UART")?
-            .write(bytes)
-            .map_err(device_error)
+    /// Written bytes also go into the running recording, if there is one.
+    fn uart_write(&mut self, data: &[u8]) -> PyResult<()> {
+        let dev = self
+            .dev
+            .as_deref()
+            .ok_or_else(|| DeviceError::new_err("device is closed"))?;
+        let rec = self.recording.as_mut().map(|(_, rec)| rec);
+        benchwatt_session::uart_write(dev, rec, data).map_err(device_error)
     }
     fn uart_close(&self) -> PyResult<()> {
         need(self.dev()?.uart(), "UART")?
             .close()
             .map_err(device_error)
     }
-    #[pyo3(signature = (channels, gpi=false, uart=false))]
-    fn start_recording(&mut self, channels: Vec<String>, gpi: bool, uart: bool) -> PyResult<()> {
+    /// Without channels: the analog channels that measure the outputs.
+    #[pyo3(signature = (channels=None, digital=false, uart=None))]
+    fn start_recording(
+        &mut self,
+        channels: Option<Vec<String>>,
+        digital: bool,
+        uart: Option<u32>,
+    ) -> PyResult<()> {
         if self.recording.is_some() {
             return Err(PyValueError::new_err("recording already active"));
         }
-        let (capture, rec) = Capture::start(self.dev()?, &channels, gpi, uart.then_some(115200))
-            .map_err(device_error)?;
+        let dev = self.dev()?;
+        let channels = channels.unwrap_or_else(|| {
+            dev.channels()
+                .into_iter()
+                .filter(|c| c.kind == Kind::Analog && !c.group.is_empty())
+                .map(|c| c.name)
+                .collect()
+        });
+        let (capture, rec) = Capture::start(dev, &channels, digital, uart).map_err(device_error)?;
         self.recording = Some((Mutex::new(capture), rec));
         Ok(())
     }
     fn stop_recording(&mut self) -> PyResult<PyRecording> {
         self.finish()
     }
-    #[pyo3(signature = (duration, channels=None, gpi=false, uart=false))]
+    #[pyo3(signature = (duration, channels=None, digital=false, uart=None))]
     fn record(
         &mut self,
         py: Python<'_>,
         duration: f64,
         channels: Option<Vec<String>>,
-        gpi: bool,
-        uart: bool,
+        digital: bool,
+        uart: Option<u32>,
     ) -> PyResult<PyRecording> {
         if !duration.is_finite() || duration < 0.0 || duration > u64::MAX as f64 {
             return Err(PyValueError::new_err(
@@ -402,11 +472,7 @@ impl PyArc {
         let deadline = Instant::now()
             .checked_add(wait_for)
             .ok_or_else(|| PyValueError::new_err("duration is too large"))?;
-        self.start_recording(
-            channels.unwrap_or_else(|| vec!["mc".into(), "mv".into(), "mp".into()]),
-            gpi,
-            uart,
-        )?;
+        self.start_recording(channels, digital, uart)?;
         while Instant::now() < deadline {
             let wait = deadline
                 .saturating_duration_since(Instant::now())
@@ -432,38 +498,35 @@ impl PyArc {
     }
 }
 
-#[cfg(feature = "testing")]
+/// The supported devices that are plugged in.
 #[pyfunction]
-fn recording_from_fixture(path: &str) -> PyResult<PyRecording> {
-    let input = std::fs::read_to_string(path).map_err(file_error)?;
-    let (channels, blocks) = otii_arc::adapter::replay(&input);
-    let keep: Vec<_> = channels
-        .into_iter()
-        .filter(|c| matches!(c.name.as_str(), "mc" | "mv" | "gpi" | "rx"))
+fn devices(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    let found: Vec<_> = benchwatt_session::find()
+        .iter()
+        .map(|f| json!({"kind": f.kind, "port": f.port}))
         .collect();
-    let mut rec = NativeRecording::new(&keep);
-    for b in &blocks {
-        rec.push(b);
-    }
-    rec.stop();
-    Ok(PyRecording {
-        rec,
-        meta: Meta::default(),
-    })
+    to_py(py, &Value::Array(found))
+}
+/// Open a device: the only one plugged in, a kind, or `kind@port`.
+#[pyfunction]
+#[pyo3(signature = (device=None))]
+fn open(device: Option<&str>) -> PyResult<PyDevice> {
+    let found = benchwatt_session::select(device).map_err(device_error)?;
+    Ok(PyDevice::new(
+        benchwatt_session::open(&found).map_err(device_error)?,
+    ))
 }
 
 #[pymodule]
 fn _benchwatt(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyArc>()?;
+    m.add_class::<PyDevice>()?;
     m.add_class::<PyRecording>()?;
+    m.add_function(wrap_pyfunction!(devices, m)?)?;
+    m.add_function(wrap_pyfunction!(open, m)?)?;
     m.add("DeviceError", m.py().get_type::<DeviceError>())?;
     m.add("TimeoutError", m.py().get_type::<TimeoutError>())?;
     m.add("AlertError", m.py().get_type::<AlertError>())?;
     #[cfg(feature = "testing")]
-    {
-        let testing = PyModule::new(m.py(), "_testing")?;
-        testing.add_function(wrap_pyfunction!(recording_from_fixture, &testing)?)?;
-        m.add_submodule(&testing)?;
-    }
+    testing::register(m)?;
     Ok(())
 }

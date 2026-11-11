@@ -28,6 +28,9 @@ def test_fixture_data_and_stats(tmp_path):
         rec.data("bad")
     with pytest.raises(ValueError):
         rec.data("mc", t0=2, t1=1)
+    assert isinstance(rec.bytes("rx"), list)
+    with pytest.raises(ValueError, match="unknown bytes channel mc"):
+        rec.bytes("mc")
 
     native = tmp_path / "run.bwrec"
     csv = tmp_path / "run.csv"

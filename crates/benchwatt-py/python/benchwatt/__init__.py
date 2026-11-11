@@ -1,7 +1,13 @@
-"""Python bindings for Otii Arc recordings and device control."""
-from ._benchwatt import Arc, Recording, DeviceError, TimeoutError, AlertError
+"""Python bindings for Benchwatt: bench power instruments and their recordings."""
+from ._benchwatt import Device, Recording, devices, open, DeviceError, TimeoutError, AlertError
 
-__all__ = ["Arc", "Recording", "DeviceError", "TimeoutError", "AlertError"]
+__all__ = ["Arc", "Device", "Recording", "devices", "open", "DeviceError", "TimeoutError", "AlertError"]
+
+
+def Arc(port=None):
+    """Open an Otii Arc: the one found by USB id, or the one on `port`."""
+    return open("arc" if port is None else f"arc@{port}")
+
 
 try:
     from ._benchwatt import _testing
