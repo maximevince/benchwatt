@@ -3,7 +3,7 @@ use otii_arc::msg::{Block, BlockBody};
 use std::{fs, io::Read};
 fn path(ext: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
-        "otii-test-{}-{}.{}",
+        "benchwatt-test-{}-{}.{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

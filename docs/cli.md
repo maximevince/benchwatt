@@ -1,6 +1,6 @@
 # `benchwatt` command line interface
 
-Build with `cargo build -p benchwatt-cli`; the binary is `target/debug/otii`. Use `--port /dev/ttyACM0` to select an Arc explicitly. Live commands find a matching USB serial port if `--port` is omitted. `convert` and `stats` work entirely offline.
+Build with `cargo build -p benchwatt-cli`; the binary is `target/debug/benchwatt`. Use `--port /dev/ttyACM0` to select an Arc explicitly. Live commands find a matching USB serial port if `--port` is omitted. `convert` and `stats` work entirely offline.
 
 ## Scripting
 
