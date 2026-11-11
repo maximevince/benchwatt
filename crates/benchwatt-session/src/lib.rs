@@ -16,18 +16,25 @@ pub struct Found {
     pub kind: &'static str,
     pub port: String,
 }
-/// A driver: its name, how it finds its devices by USB id and how it opens one.
+/// A driver: its name, what to call its devices before one is opened, how it
+/// finds them by USB id and how it opens one.
 type Driver = (
+    &'static str,
     &'static str,
     fn() -> Vec<String>,
     fn(&str) -> Result<Box<dyn Device>>,
 );
 const DRIVERS: &[Driver] = &[
-    ("arc", arc_ports, arc_open),
-    ("ppk2", benchwatt_ppk2::find, ppk2_open),
-    ("gpp", benchwatt_gpp::find, gpp_open),
+    ("arc", "Otii Arc", arc_ports, arc_open),
+    ("ppk2", "Nordic PPK2", benchwatt_ppk2::find, ppk2_open),
+    ("gpp", "GW Instek GPP", benchwatt_gpp::find, gpp_open),
     #[cfg(feature = "joulescope")]
-    ("joulescope", benchwatt_joulescope::find, joulescope_open),
+    (
+        "joulescope",
+        "Joulescope JS220",
+        benchwatt_joulescope::find,
+        joulescope_open,
+    ),
 ];
 fn arc_ports() -> Vec<String> {
     otii_arc::device::find_port().into_iter().collect()
@@ -52,11 +59,20 @@ fn joulescope_open(device: &str) -> Result<Box<dyn Device>> {
 pub fn find() -> Vec<Found> {
     DRIVERS
         .iter()
-        .flat_map(|&(kind, ports, _)| ports().into_iter().map(move |port| Found { kind, port }))
+        .flat_map(|&(kind, _, ports, _)| ports().into_iter().map(move |port| Found { kind, port }))
         .collect()
 }
+impl Found {
+    /// What to call the device while it is not open, e.g. `Otii Arc`.
+    pub fn name(&self) -> &'static str {
+        DRIVERS
+            .iter()
+            .find(|d| d.0 == self.kind)
+            .map_or(self.kind, |d| d.1)
+    }
+}
 pub fn open(found: &Found) -> Result<Box<dyn Device>> {
-    let (_, _, open) = DRIVERS
+    let (_, _, _, open) = DRIVERS
         .iter()
         .find(|d| d.0 == found.kind)
         .ok_or_else(|| Error::invalid(format!("unknown device kind {}", found.kind)))?;

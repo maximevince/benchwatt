@@ -14,6 +14,9 @@
   let host: HTMLDivElement, canvas: HTMLCanvasElement;
   let width = $state(700), availableHeight = $state(400), version = $state(0);
   let selecting = $state(false), cursor = $state<number | null>(null);
+  // What a press would do where the pointer is, shown as the mouse cursor.
+  let pointer = $state('grab');
+  const rec = app.tab!.id;
   let hoveredUart = $state<UartChunk | null>(null);
   let menuTime = $state(0), menuUart = $state<UartChunk | null>(null);
   let locked = $state<string[]>([]), logarithmic = $state<string[]>([]);
@@ -64,7 +67,7 @@
     const [t0,t1] = app.viewRange;
     for (const ch of analog) {
       if (inflight.has(ch)) continue; inflight.add(ch);
-      void backend.getView(ch,t0,t1,Math.max(1,Math.floor(width*devicePixelRatio/2))).then(view => {
+      void backend.getView(rec,ch,t0,t1,Math.max(1,Math.floor(width*devicePixelRatio/2))).then(view => {
         if (app.viewRange[0] === t0 && app.viewRange[1] === t1) {
           if (view.kind === 'raw') for (let i=1;i<view.t.length;i++) if (Number.isFinite(view.v[i]) && Number.isFinite(view.v[i-1]) && view.t[i]>view.t[i-1]) sampleSpacing=Math.min(sampleSpacing,view.t[i]-view.t[i-1]);
           views.set(ch,view); version++; draw();
@@ -73,7 +76,7 @@
     }
     // One request at a time: while recording the view moves faster than a long range can be summed.
     if (statsBusy) return; statsBusy = true;
-    void backend.getStats(t0,t1).then(stats => {
+    void backend.getStats(rec,t0,t1).then(stats => {
       if (app.viewRange[0] === t0 && app.viewRange[1] === t1) {
         visibleMeans=Object.fromEntries(Object.entries(stats.channels).map(([ch,stat]) => [ch,stat.mean]));
         version++;
@@ -196,9 +199,15 @@
     if (event.button !== 0) return;
     try { canvas.setPointerCapture(event.pointerId); } catch { /* Synthetic pointer events have no active pointer. */ }
     const at=time(event.offsetX);
-    const start=app.range && Math.abs(x(app.range[0])-event.offsetX)<7, end=app.range && Math.abs(x(app.range[1])-event.offsetX)<7;
-    const mode=start ? 'start' : end ? 'end' : event.shiftKey || selecting ? 'select' : 'pan';
+    const mode=edgeAt(event.offsetX) ?? (event.shiftKey || selecting ? 'select' : 'pan');
+    pointer=mode === 'pan' ? 'grabbing' : mode === 'select' ? 'crosshair' : 'ew-resize';
     drag={x:event.offsetX,range:[...app.viewRange],mode,anchor:at}; if (mode === 'select') { app.follow=false; app.range=[at,at]; }
+  }
+  /** The edge of the selection within reach of this x position, which a drag then moves. */
+  function edgeAt(px: number): 'start' | 'end' | null {
+    if (!app.range) return null;
+    const a=Math.abs(x(app.range[0])-px), b=Math.abs(x(app.range[1])-px);
+    return Math.min(a,b) >= 7 ? null : a < b ? 'start' : 'end';
   }
   function move(event: PointerEvent) {
     cursor=Math.max(0,Math.min(duration(),time(event.offsetX))); hoveredUart=null;
@@ -208,9 +217,9 @@
       else if (drag.mode === 'end' && app.range) app.range=[app.range[0],Math.max(cursor,app.range[0])];
       else { app.follow=false; app.viewRange=panFrom(drag.range,event.offsetX-drag.x,width,duration(),minimumSpan()); }
       schedule();
-    } else { hoveredUart=uartAt(event.offsetX,event.offsetY); app.focusedUartTime=hoveredUart ? lineStartForChunk(app.uart,app.uart.indexOf(hoveredUart)) : null; draw(); }
+    } else { pointer=edgeAt(event.offsetX) ? 'ew-resize' : event.shiftKey || selecting ? 'crosshair' : 'grab'; hoveredUart=uartAt(event.offsetX,event.offsetY); app.focusedUartTime=hoveredUart ? lineStartForChunk(app.uart,app.uart.indexOf(hoveredUart)) : null; draw(); }
   }
-  function up(event: PointerEvent) { if (event.type === 'pointerup' && event.button !== 0) return; drag=null; if (app.range && app.range[1]-app.range[0]<1e-6) app.range=null; void app.refreshDetails(); }
+  function up(event: PointerEvent) { if (event.type === 'pointerup' && event.button !== 0) return; drag=null; pointer=edgeAt(event.offsetX) ? 'ew-resize' : selecting ? 'crosshair' : 'grab'; if (app.range && app.range[1]-app.range[0]<1e-6) app.range=null; void app.refreshDetails(); }
   function zoomToSelection() {
     if (!app.range) return;
     const pad=(app.range[1]-app.range[0])*.05;
@@ -236,14 +245,14 @@
   $effect(() => { const range=app.range; if (!range || range[0] === range[1]) return; const frame=requestAnimationFrame(() => void app.refreshStats()); return () => cancelAnimationFrame(frame); });
 </script>
 <section class="recording-panel">
-  <div class="recording-toolbar"><strong>Recording</strong><span>{app.recording?.duration_s.toFixed(2) ?? '0.00'} s · {app.recording?.gaps ?? 0} gaps</span><button onclick={() => { app.follow=!app.follow; schedule(); }} class:active={app.follow}>Follow</button><button onclick={() => selecting=!selecting} class:active={selecting}>Select range</button><button onclick={fit}>Fit</button></div>
+  <div class="recording-toolbar"><span>{app.recording?.duration_s.toFixed(2) ?? '0.00'} s{#if app.recording?.gaps} · {app.recording.gaps} {app.recording.gaps === 1 ? 'gap' : 'gaps'}{/if}</span><button onclick={() => { app.follow=!app.follow; schedule(); }} class:active={app.follow}>Follow</button><button onclick={() => selecting=!selecting} class:active={selecting}>Select range</button><button onclick={fit}>Fit</button></div>
   <div class="recording-stage" bind:this={host}>
     <div class="lane-headers"><div class="axis-spacer"></div>{#each lanes as lane (lane.key)}{@const ch=lane.key}{@const isAnalog=lane.kind === 'analog'}{@const isCurrent=isAnalog && lane.channel.quantity === 'Current'}
       <ContextMenu><ContextMenuTrigger class="lane-label" style={'height:'+laneHeight(lane)+'px'}><div class="lane-name"><strong title={lane.channel.name}><ChannelName label={lane.label} color={lane.color} output={lane.output}/></strong><small>{isAnalog ? lane.unit : ''}</small></div>
         {#if isAnalog}<div class="lane-value">{currentValue(ch)}</div><div class="lane-mean">mean {meanValue(ch)}</div><div class="lane-actions"><button onclick={() => toggleLock(ch)} title="Lock y scale" aria-label={'Lock y scale for '+lane.label}>{locked.includes(ch) ? '🔒' : '⌁'}</button>{#if isCurrent}<button class:active={logarithmic.includes(ch)} onclick={() => toggleLog(ch)} title="Log scale" aria-label={'Log scale for '+lane.label}>log</button>{/if}</div>{/if}</ContextMenuTrigger>
         <ContextMenuContent class="plot-context-menu"><ContextMenuCheckboxItem disabled={!isAnalog} checked={locked.includes(ch)} onclick={() => toggleLock(ch)}>Lock y scale</ContextMenuCheckboxItem><ContextMenuCheckboxItem disabled={!isCurrent} checked={logarithmic.includes(ch)} onclick={() => toggleLog(ch)}>Log scale</ContextMenuCheckboxItem><ContextMenuItem disabled={!isAnalog} onclick={() => autoscale(ch)}>Autoscale now</ContextMenuItem><ContextMenuSeparator/><ContextMenuItem onclick={() => app.hiddenLanes=[...app.hiddenLanes,ch]}>Hide lane</ContextMenuItem><ContextMenuSub><ContextMenuSubTrigger disabled={!app.hiddenLanes.length}>Hidden lanes</ContextMenuSubTrigger><ContextMenuSubContent class="plot-context-menu">{#each app.hiddenLanes as hidden}<ContextMenuItem onclick={() => app.hiddenLanes=app.hiddenLanes.filter(key => key !== hidden)}>{labelOf(hidden)}</ContextMenuItem>{/each}</ContextMenuSubContent></ContextMenuSub></ContextMenuContent></ContextMenu>
     {/each}</div>
-    <div class="plot-surface"><ContextMenu><ContextMenuTrigger><canvas bind:this={canvas} style:width={width+'px'} style:height={height+'px'} onwheel={wheel} oncontextmenu={plotContext} onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} ondblclick={fit} onpointerleave={() => { cursor=null; hoveredUart=null; draw(); }}></canvas></ContextMenuTrigger>
+    <div class="plot-surface"><ContextMenu><ContextMenuTrigger><canvas bind:this={canvas} style:width={width+'px'} style:height={height+'px'} style:cursor={pointer} onwheel={wheel} oncontextmenu={plotContext} onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} ondblclick={fit} onpointerleave={() => { cursor=null; hoveredUart=null; draw(); }}></canvas></ContextMenuTrigger>
       <ContextMenuContent class="plot-context-menu">{#if menuUart}<ContextMenuItem onclick={() => copyUartLine()}>Copy line</ContextMenuItem><ContextMenuItem onclick={() => copyUartLine(true)}>Copy as hex</ContextMenuItem><ContextMenuItem onclick={showUartInConsole}>Show in console</ContextMenuItem><ContextMenuSeparator/>{/if}<ContextMenuItem disabled={!app.range} onclick={zoomToSelection}>Zoom to selection</ContextMenuItem><ContextMenuItem disabled={!app.range || !app.stats} onclick={() => void app.copyStats()}>Copy selection stats<ContextMenuShortcut>Ctrl+Shift+C</ContextMenuShortcut></ContextMenuItem><ContextMenuSub><ContextMenuSubTrigger disabled={!app.range}>Export selection</ContextMenuSubTrigger><ContextMenuSubContent class="plot-context-menu"><ContextMenuItem onclick={() => void app.exportRecording('csv',true)}>CSV…</ContextMenuItem><ContextMenuItem onclick={() => void app.exportRecording('sr',true)}>sigrok session (.sr)…</ContextMenuItem></ContextMenuSubContent></ContextMenuSub><ContextMenuItem disabled={!app.range} onclick={() => app.clearSelection()}>Clear selection<ContextMenuShortcut>Esc</ContextMenuShortcut></ContextMenuItem><ContextMenuSeparator/><ContextMenuItem onclick={() => app.zoomFit()}>Zoom to fit<ContextMenuShortcut>F</ContextMenuShortcut></ContextMenuItem><ContextMenuItem onclick={() => zoomHere(.5)}>Zoom in here</ContextMenuItem><ContextMenuItem onclick={() => zoomHere(2)}>Zoom out here</ContextMenuItem><ContextMenuItem onclick={centerHere}>Center view here</ContextMenuItem><ContextMenuItem onclick={() => void copyPoint()}>Copy time and values at this point</ContextMenuItem></ContextMenuContent></ContextMenu>
       {#if app.range}<SelectionCard range={app.range} viewRange={app.viewRange} {width} stats={app.stats}/>{/if}
       {#if hoveredUart}<div class="uart-tooltip" style:left={Math.min(width-180,Math.max(4,x(hoveredUart.t)+8))+'px'} style:top={topOf(UART_LANE)-4+'px'} style:transform="translateY(-100%)"><time>{hoveredUart.t.toFixed(6)} s</time><span>{printable(hoveredUart.bytes)}</span><code>{hex(hoveredUart.bytes)}</code></div>{/if}

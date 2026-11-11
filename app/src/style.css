@@ -177,25 +177,6 @@ button:disabled {
   letter-spacing: 0.12em;
   color: var(--muted-foreground);
 }
-.device-badge {
-  display: flex;
-  gap: 7px;
-  padding: 5px 9px;
-  font-weight: 500;
-  font-size: 11px;
-}
-.device-badge i,
-.live-badge i {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #71717a;
-}
-.device-badge i.connected,
-.live-badge i {
-  background: #10b981;
-}
 .device-detail {
   color: var(--muted-foreground);
   font-family: "Geist Mono", monospace;
@@ -831,7 +812,6 @@ button:disabled {
 [data-slot="context-menu-shortcut"] { font-family: 'Geist Mono'; font-size: 11px; margin-left: auto; padding-left: 28px; }
 [data-slot="menubar-content"], [data-slot="menubar-sub-content"] { min-width: 210px; }
 .topbar-right { margin-left: auto; }
-.file-name { color: var(--muted-foreground); font: 11px 'Geist Mono'; margin-left: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .info-list { display: grid; grid-template-columns: 1fr auto; gap: 8px 20px; font-size: 12px; max-height: 55vh; overflow: auto; }
 .info-list dt { color: var(--muted-foreground); }.info-list dd { font-family: 'Geist Mono'; text-align: right; }
 .uart-console { position: relative; height: 100%; display: flex; flex-direction: column; min-height: 0; outline: none; }
@@ -849,14 +829,47 @@ button:disabled {
 .uart-send { border-top: 1px solid var(--border); padding: 5px 10px; }.uart-send select { width: 66px; }
 .uart-line mark { background: color-mix(in srgb, var(--uart) 28%, transparent); color: inherit; border-radius: 2px; }
 .unsaved-dot { display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--muted-foreground); vertical-align: middle; }
-.file-name { margin-left: 18px; padding-left: 14px; border-left: 1px solid var(--border); }
 [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="menubar-content"] { outline: none; }
 .gpo-title { margin-top: 16px; }
 
 /* Devices and description-driven sidebar parts. */
-.device-select { padding: 0; border: 0; background: none; border-radius: 9999px; cursor: pointer; }
-.device-select.selected [data-slot="badge"] { border-color: var(--foreground); }
-.topbar-right:has(.device-select.selected) .device-select:not(.selected) [data-slot="badge"] { opacity: .7; }
+.device-picker { height: auto; padding: 0; border: 0; background: transparent; box-shadow: none; }
+.device-picker [data-slot="menubar-trigger"] { gap: 7px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 9999px; font-size: 12px; font-weight: 500; }
+.device-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #71717a; }
+.device-dot.connected { background: #10b981; }
+.device-dot.waiting { background: #f59e0b; animation: record-pulse 1s ease-in-out infinite; }
+.device-dot.failed { background: #ef4444; }
+.device-item { display: flex; align-items: baseline; gap: 14px; width: 100%; }
+.device-item small { margin-left: auto; color: var(--muted-foreground); font: 11px "Geist Mono", monospace; }
+.device-none { color: var(--muted-foreground); font-weight: 400; }
+.device-chooser h2 { margin: 6px 0 4px; font-size: 13px; font-weight: 600; }
+.device-chooser p { margin: 0 0 10px; font-size: 12px; color: var(--muted-foreground); line-height: 1.45; }
+.device-chooser .device-error { color: var(--foreground); font-family: "Geist Mono", monospace; font-size: 11px; }
+.device-choices { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.device-choices button { display: flex; flex-direction: column; gap: 2px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--foreground); text-align: left; cursor: pointer; }
+.device-choices button:hover { background: var(--accent); }
+.device-choices strong { font-size: 13px; font-weight: 500; }
+.device-choices small { color: var(--muted-foreground); font: 11px "Geist Mono", monospace; }
+
+/* Recording tabs. */
+.tab-strip { flex: none; display: flex; align-items: stretch; gap: 2px; height: 34px; padding: 0 8px; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+.rec-tab { display: flex; align-items: center; flex: 0 1 auto; min-width: 90px; max-width: 260px; margin-top: 4px; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; color: var(--muted-foreground); }
+.rec-tab:hover { background: var(--accent); }
+.rec-tab.current { margin-bottom: -1px; border-color: var(--border); background: var(--background); color: var(--foreground); }
+.rec-tab-main { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 1; height: 100%; padding: 0 4px 0 10px; border: 0; background: none; color: inherit; font-size: 12px; cursor: pointer; }
+.rec-tab-main .record-dot { margin-right: 0; flex: none; }
+.rec-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rec-tab-source { flex: none; color: var(--muted-foreground); font: 10px "Geist Mono", monospace; }
+.rec-tab .unsaved-dot { flex: none; margin-left: 0; }
+.rec-tab-close, .tab-action { display: grid; place-items: center; flex: none; border: 0; border-radius: 4px; background: none; color: var(--muted-foreground); cursor: pointer; }
+.rec-tab-close { width: 18px; height: 18px; margin-right: 5px; opacity: 0; }
+.rec-tab:hover .rec-tab-close, .rec-tab.current .rec-tab-close, .rec-tab-close:focus-visible { opacity: 1; }
+.tab-action { align-self: center; width: 24px; height: 24px; }
+.tab-strip [data-slot="tooltip-trigger"] { display: flex; align-items: center; }
+.rec-tab-close:hover, .tab-action:hover:not(:disabled) { background: var(--muted); color: var(--foreground); }
+.tab-action:disabled { opacity: .4; cursor: default; }
+.plot-empty-actions { display: flex; gap: 8px; }
+.recording-panel { flex: 1; min-height: 0; }
 .readout-set { margin-left: 7px; font: 500 9px "Geist Mono", monospace; letter-spacing: .06em; color: var(--muted-foreground); border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; }
 .setting-value { font: 12px "Geist Mono", monospace; font-variant-numeric: tabular-nums; }
 .supply-setting { margin-top: 9px; }

@@ -1,10 +1,26 @@
 <script lang="ts">
   import { app } from '$lib/stores.svelte';
   import { Button } from '$lib/components/ui/button';
-  import { Badge } from '$lib/components/ui/badge';
+  import { Menubar, MenubarMenu, MenubarTrigger, MenubarContent } from '$lib/components/ui/menubar';
   import { Tooltip, TooltipContent, TooltipTrigger } from '$lib/components/ui/tooltip';
-  import { Moon, Sun, CircleHelp, Activity } from 'lucide-svelte';
+  import { Moon, Sun, CircleHelp, Activity, ChevronDown } from 'lucide-svelte';
   import MainMenu from './MainMenu.svelte';
-  const short = (serial: string) => serial ? serial.slice(0, 4) + '…' : '—';
+  import DeviceItems from './DeviceItems.svelte';
+  const wanted = $derived(app.found.find(f => f.key === app.wanted));
+  const clock = (s: number) => `${Math.floor(s / 60).toString().padStart(2, '0')}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
 </script>
-<header class="topbar"><div class="brand"><Activity size={18} strokeWidth={2.3}/><strong>Benchwatt</strong><span class="brand-divider"></span><span class="brand-subtitle">POWER MONITOR</span></div><MainMenu/>{#if app.recording}<span class="file-name" title={app.fileName || 'Not saved yet'}>{app.fileName || 'untitled'}{#if app.unsaved}<i class="unsaved-dot" title="Unsaved changes"></i>{/if}</span>{/if}<div class="topbar-right">{#each app.devices as device (device.desc.id)}<button class="device-select" class:selected={app.devices.length > 1 && app.selected === device} aria-pressed={app.selected === device} title={`${device.desc.model} ${device.desc.serial}`} onclick={() => app.select(device.desc.id)}><Badge variant="outline" class="device-badge"><i class:connected={!!device.state}></i><span>{device.desc.model}</span><span class="device-detail">· fw {device.desc.firmware || '—'} · {short(device.desc.serial)}</span></Badge></button>{:else}<Badge variant="outline" class="device-badge"><i></i><span>Disconnected</span></Badge>{/each}<Button variant="outline" size="sm" disabled={!app.selected && !app.recording?.active} onclick={() => void app.toggleRecording()} aria-label={app.recording?.active ? 'Stop recording' : 'Start recording'}><span class:record-pulse={app.recording?.active} class="record-dot"></span>{app.recording?.active ? `REC ${Math.floor(app.recording.duration_s / 60).toString().padStart(2, '0')}:${Math.floor(app.recording.duration_s % 60).toString().padStart(2, '0')}` : 'Record'}</Button><Tooltip><TooltipTrigger><Button variant="ghost" size="icon" onclick={() => app.toggleTheme()} aria-label="Toggle theme">{#if app.darkTheme}<Sun size={17}/>{:else}<Moon size={17}/>{/if}</Button></TooltipTrigger><TooltipContent>Toggle theme</TooltipContent></Tooltip><Tooltip><TooltipTrigger><Button variant="ghost" size="icon" onclick={() => app.showShortcuts()} aria-label="Keyboard shortcuts"><CircleHelp size={17}/></Button></TooltipTrigger><TooltipContent>Space: toggle output · R: start or stop recording</TooltipContent></Tooltip></div></header>
+<header class="topbar"><div class="brand"><Activity size={18} strokeWidth={2.3}/><strong>Benchwatt</strong><span class="brand-divider"></span><span class="brand-subtitle">POWER MONITOR</span></div><MainMenu/>
+  <div class="topbar-right">
+    <Menubar class="device-picker"><MenubarMenu><MenubarTrigger aria-label="Device">
+      <i class="device-dot" class:connected={!!app.selected?.state} class:waiting={app.connecting} class:failed={!!app.deviceError}></i>
+      {#if app.selected}<span>{app.selected.desc.model}</span><span class="device-detail">{app.selected.desc.serial}</span>
+      {:else if wanted}<span>{wanted.name}</span><span class="device-detail">{app.deviceError ? 'cannot open' : 'connecting…'}</span>
+      {:else if app.wanted}<span class="device-detail">Unplugged</span>
+      {:else}<span>{app.found.length ? 'Choose a device' : 'No device'}</span>{/if}
+      <ChevronDown size={14}/>
+    </MenubarTrigger><MenubarContent align="end"><DeviceItems/></MenubarContent></MenubarMenu></Menubar>
+    <Button variant="outline" size="sm" disabled={!app.selected && !app.live} onclick={() => void app.toggleRecording()} aria-label={app.live ? 'Stop recording' : 'Start recording'}><span class:record-pulse={!!app.live} class="record-dot"></span>{app.live ? `Stop ${clock(app.live.info.duration_s)}` : 'Record'}</Button>
+    <Tooltip><TooltipTrigger><Button variant="ghost" size="icon" onclick={() => app.toggleTheme()} aria-label="Toggle theme">{#if app.darkTheme}<Sun size={17}/>{:else}<Moon size={17}/>{/if}</Button></TooltipTrigger><TooltipContent>Toggle theme</TooltipContent></Tooltip>
+    <Tooltip><TooltipTrigger><Button variant="ghost" size="icon" onclick={() => app.showShortcuts()} aria-label="Keyboard shortcuts"><CircleHelp size={17}/></Button></TooltipTrigger><TooltipContent>Keyboard shortcuts (?)</TooltipContent></Tooltip>
+  </div>
+</header>

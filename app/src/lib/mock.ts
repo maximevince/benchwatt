@@ -1,10 +1,10 @@
-import type { Backend, Command, Events, Device, DeviceDesc, DeviceState, ChannelDesc, Monitor, RecordingInfo, View, AllStats, UartChunk, Edge, Stats, OutputDesc, SettingDesc } from './backend';
+import type { Backend, Command, Events, Devices, DeviceDesc, DeviceState, ChannelDesc, Monitor, RecordingInfo, View, AllStats, UartChunk, Edge, Stats, OutputDesc, SettingDesc } from './backend';
 // A device that cannot report a setpoint leaves it null; the simulation then assumes 3.7 V and no limit.
 const setpoints = (sim: Sim, i: number) => { const o = sim.state.outputs[i]; return { enabled: o.enabled, voltage: o.voltage ?? 3.7, current_limit: o.current_limit ?? Infinity }; };
 import { settingError } from './channels';
 
 // Browser stand-in for the Tauri backend: simulates concrete devices through the same contract.
-// ?devices=arc,gpp,ppk2 picks the devices (default: one Arc); ?disconnected simulates none.
+// ?devices=arc,gpp,ppk2 picks what is plugged in (default: one Arc); ?disconnected simulates nothing.
 const params = new URLSearchParams(window.location.search);
 const kinds = params.has('disconnected') ? [] : (params.get('devices') ?? 'arc').split(',').map(x => x.trim()).filter(Boolean);
 
@@ -133,30 +133,42 @@ function ppk2(id: string): Sim {
 }
 
 const makers: Record<string, (id: string) => Sim> = { arc, gpp, ppk2 };
+const names: Record<string, string> = { arc: 'Otii Arc', gpp: 'GW Instek GPP', ppk2: 'Nordic PPK2' };
 const sims: Sim[] = [];
-let connected = false;
+let plugged = false, wanted: string | null = null, active: Sim | null = null;
 for (const kind of kinds) {
   if (!makers[kind]) continue;
-  const count = sims.filter(s => s.desc.kind === kind).length;
-  sims.push(makers[kind](count ? `${kind}-${count + 1}` : kind));
+  sims.push(makers[kind](`${kind}@/dev/ttyACM${sims.length}`));
 }
-const deviceList = (): Device[] => connected ? sims.map(s => ({ desc: s.desc, state: { ...s.state } })) : [];
+const devices = (): Devices => ({
+  found: plugged ? sims.map(s => ({ key: s.desc.id, kind: s.desc.kind, name: names[s.desc.kind], port: s.desc.id.split('@')[1] })) : [],
+  wanted, active: active ? { desc: active.desc, state: { ...active.state } } : null, error: null,
+});
 function sim(id: unknown): Sim {
-  return (connected && sims.find(s => s.desc.id === id)) || fail(`no device ${String(id)}`);
+  return active && active.desc.id === id ? active : fail(`device ${String(id)} is not connected`);
 }
 
-let recording: RecordingInfo | null = null;
-let recordingSim: Sim | null = null;
-let recordingTick = 0, pulse = 0;
-let uartLog: UartChunk[] = [];
-let edges: Edge[] = [];
-const values: Record<string, number[]> = {};
-const pyramid: Record<string, { min: number; max: number }[][]> = {};
-const rate = (ch: string) => recording?.channels.find(c => c.name === ch)?.rate_hz ?? 0;
-function add(ch: string, value: number) {
-  const raw = values[ch] ??= [];
+/** One recording: what the frontend knows about it and the samples behind it. */
+type Rec = {
+  info: RecordingInfo; sim: Sim | null; tick: number; pulse: number; uart: UartChunk[]; edges: Edge[];
+  values: Record<string, number[]>; pyramid: Record<string, { min: number; max: number }[][]>;
+};
+const recs = new Map<number, Rec>();
+let lastRec = 0;
+const rec = (id: number): Rec => recs.get(id) ?? fail('this recording is closed');
+const live = () => [...recs.values()].find(r => r.info.active) ?? null;
+function newRec(source: Sim, channels: ChannelDesc[], activeNow: boolean): Rec {
+  const { kind, model, serial, firmware, hardware } = source.desc;
+  const info: RecordingInfo = { id: ++lastRec, active: activeNow, duration_s: 0, samples: Object.fromEntries(channels.map(ch => [ch.name, 0])), gaps: 0, channels, device: activeNow ? source.desc.id : null, source: { kind, model, serial, firmware, hardware } };
+  const r: Rec = { info, sim: source, tick: 0, pulse: 0, uart: [], edges: [], values: {}, pyramid: {} };
+  recs.set(info.id, r);
+  return r;
+}
+const rate = (r: Rec, ch: string) => r.info.channels.find(c => c.name === ch)?.rate_hz ?? 0;
+function add(r: Rec, ch: string, value: number) {
+  const raw = r.values[ch] ??= [];
   raw.push(value);
-  const levels = pyramid[ch] ??= [[]];
+  const levels = r.pyramid[ch] ??= [[]];
   levels[0].push({ min: value, max: value });
   let level = 0;
   while (levels[level].length % 16 === 0) {
@@ -167,48 +179,48 @@ function add(ch: string, value: number) {
   }
 }
 /** Appends 100 ms of samples from the recorded device. */
-function generate(source: Sim, info: RecordingInfo, uartOpen: boolean) {
-  const start = recordingTick / 10;
+function generate(r: Rec, source: Sim, uartOpen: boolean) {
+  const start = r.tick / 10, info = r.info;
   for (const ch of info.channels) {
-    if (ch.kind === 'Digital' && source.edges) { edges.push(...source.edges(source, start)); info.samples[ch.name] = edges.length; }
-    else if (ch.kind === 'Bytes' && !ch.set && uartOpen && recordingTick % 10 === 0) {
-      uartLog.push({ t: start, dir: 'rx', bytes: Array.from(new TextEncoder().encode(`tick ${++pulse}\n`)) });
-      info.samples[ch.name] = uartLog.filter(x => x.dir === 'rx').reduce((n, x) => n + x.bytes.length, 0);
+    if (ch.kind === 'Digital' && source.edges) { r.edges.push(...source.edges(source, start)); info.samples[ch.name] = r.edges.length; }
+    else if (ch.kind === 'Bytes' && !ch.set && uartOpen && r.tick % 10 === 0) {
+      r.uart.push({ t: start, dir: 'rx', bytes: Array.from(new TextEncoder().encode(`tick ${++r.pulse}\n`)) });
+      info.samples[ch.name] = r.uart.filter(x => x.dir === 'rx').reduce((n, x) => n + x.bytes.length, 0);
     } else if (ch.kind === 'Analog') {
-      for (let i = 0; i < ch.rate_hz / 10; i++) add(ch.name, source.sample(source, ch.name, start + i / ch.rate_hz));
-      info.samples[ch.name] = values[ch.name].length;
+      for (let i = 0; i < ch.rate_hz / 10; i++) add(r, ch.name, source.sample(source, ch.name, start + i / ch.rate_hz));
+      info.samples[ch.name] = r.values[ch.name].length;
     }
   }
-  recordingTick++;
+  r.tick++;
+}
+/** Replaces a recording's info, as the backend does when it changes, and tells the frontend. */
+function update(r: Rec, patch: Partial<RecordingInfo>) {
+  r.info = { ...r.info, ...patch };
+  emit('recording', r.info);
 }
 function recTick() {
-  if (!recording?.active || !recordingSim) return;
-  generate(recordingSim, recording, recordingSim.state.uart_open);
-  recording = { ...recording, duration_s: recordingTick / 10, samples: { ...recording.samples } };
-  emit('recording', recording);
+  const r = live();
+  if (!r?.sim) return;
+  generate(r, r.sim, r.sim.state.uart_open);
+  update(r, { duration_s: r.tick / 10, samples: { ...r.info.samples } });
 }
 window.setInterval(recTick, 100);
-function reset() {
-  for (const key of Object.keys(values)) delete values[key];
-  for (const key of Object.keys(pyramid)) delete pyramid[key];
-  edges = []; uartLog = []; pulse = 0; recordingTick = 0;
-}
-function mockView(ch: string, t0: number, t1: number, px: number): View {
-  const r = rate(ch), raw = values[ch] ?? [];
-  if (!r) return { kind: 'raw', t: [], v: [] };
-  const lo = Math.max(0, Math.ceil(t0 * r)), hi = Math.min(raw.length, Math.floor(t1 * r) + 1);
+function mockView(r: Rec, ch: string, t0: number, t1: number, px: number): View {
+  const hz = rate(r, ch), raw = r.values[ch] ?? [];
+  if (!hz) return { kind: 'raw', t: [], v: [] };
+  const lo = Math.max(0, Math.ceil(t0 * hz)), hi = Math.min(raw.length, Math.floor(t1 * hz) + 1);
   if (hi - lo <= 2 * px) {
     const t: number[] = [], v: number[] = [];
-    for (let i = lo; i < hi; i++) { t.push(i / r); v.push(raw[i]); }
+    for (let i = lo; i < hi; i++) { t.push(i / hz); v.push(raw[i]); }
     return { kind: 'raw', t, v };
   }
-  const levels = pyramid[ch];
+  const levels = r.pyramid[ch];
   let level = 1;
   while (level + 1 < levels.length && (hi - lo) / 16 ** level > 2 * px) level++;
   const size = 16 ** level, bins = levels[level] ?? [];
   const t: number[] = [], min: number[] = [], max: number[] = [];
   for (let i = Math.floor(lo / size); i < Math.min(bins.length, Math.ceil(hi / size)); i++) {
-    t.push(i * size / r); min.push(bins[i].min); max.push(bins[i].max);
+    t.push(i * size / hz); min.push(bins[i].min); max.push(bins[i].max);
   }
   const tailStart = bins.length * size;
   if (tailStart < hi && tailStart < raw.length) {
@@ -216,21 +228,21 @@ function mockView(ch: string, t0: number, t1: number, px: number): View {
     if (tail.length) {
       let low = Infinity, high = -Infinity;
       for (const value of tail) { low = Math.min(low, value); high = Math.max(high, value); }
-      t.push(tailStart / r); min.push(low); max.push(high);
+      t.push(tailStart / hz); min.push(low); max.push(high);
     }
   }
   return { kind: 'envelope', t, min, max };
 }
-function mockStats(t0: number, t1: number): AllStats {
+function mockStats(r: Rec, t0: number, t1: number): AllStats {
   const channels: Record<string, Stats> = {};
-  for (const [ch, raw] of Object.entries(values)) {
-    const r = rate(ch), slice = raw.slice(Math.max(0, Math.ceil(t0 * r)), Math.min(raw.length, Math.floor(t1 * r) + 1));
+  for (const [ch, raw] of Object.entries(r.values)) {
+    const hz = rate(r, ch), slice = raw.slice(Math.max(0, Math.ceil(t0 * hz)), Math.min(raw.length, Math.floor(t1 * hz) + 1));
     if (!slice.length) continue;
     let sum = 0, square = 0, min = Infinity, max = -Infinity;
     for (const x of slice) { sum += x; square += x*x; min = Math.min(min, x); max = Math.max(max, x); }
-    channels[ch] = { count: slice.length, min, max, mean: sum / slice.length, rms: Math.sqrt(square / slice.length), integral: sum / r };
+    channels[ch] = { count: slice.length, min, max, mean: sum / slice.length, rms: Math.sqrt(square / slice.length), integral: sum / hz };
   }
-  const first = (q: string) => recording?.channels.find(c => c.kind === 'Analog' && c.quantity === q && channels[c.name]);
+  const first = (q: string) => r.info.channels.find(c => c.kind === 'Analog' && c.quantity === q && channels[c.name]);
   const current = first('Current'), voltage = first('Voltage'), power = first('Power');
   const charge_mah = current ? channels[current.name].integral / 3.6 : null;
   const joules = power ? channels[power.name].integral : current && voltage ? channels[current.name].integral * channels[voltage.name].mean : null;
@@ -271,32 +283,35 @@ function apply(name: Command, args: Record<string, unknown>): DeviceState {
   return changed(s);
 }
 function tick() {
-  for (const s of sims) {
-    s.phase++;
-    emit('monitor', { device: s.desc.id, ...s.monitor(s) });
-  }
+  if (!active) return;
+  active.phase++;
+  emit('monitor', { device: active.desc.id, ...active.monitor(active) });
 }
-if (sims.length) window.setTimeout(() => {
-  connected = true;
-  emit('devices', deviceList());
-  tick();
-  window.setInterval(tick, 100);
-}, 1000);
-/** Byte channels of the recording, in description order, including those now in use. */
-function withChannels(names: string[]): ChannelDesc[] {
-  return recordingSim!.desc.channels.filter(ch => names.includes(ch.name));
-}
-/** A recording to open when none was made in this session: 5 s of the Arc with its UART. */
+window.setInterval(tick, 100);
+if (sims.length) window.setTimeout(() => { plugged = true; emit('devices', devices()); }, 1000);
+/** The device's channels with these names, in description order. */
+const pick = (source: Sim, names: string[]): ChannelDesc[] => source.desc.channels.filter(ch => names.includes(ch.name));
+/** What opening a file gives: 5 s of the Arc with its UART. */
 function cannedRecording(): RecordingInfo {
-  const source = arc('arc'), names = ['mc', 'mv', 'mp', 'gpi', 'rx'];
-  reset();
-  const info: RecordingInfo = { active: false, duration_s: 5, samples: {}, gaps: 0, channels: source.desc.channels.filter(ch => names.includes(ch.name)), device: null };
-  recording = info;
-  for (let i = 0; i < 50; i++) generate(source, info, true);
-  return info;
+  const source = arc('arc'), r = newRec(source, pick(source, ['mc', 'mv', 'mp', 'gpi', 'rx']), false);
+  for (let i = 0; i < 50; i++) generate(r, source, true);
+  r.info.duration_s = 5; r.sim = null;
+  return r.info;
+}
+function stop() {
+  const r = live();
+  if (r) update(r, { active: false });
 }
 export const mockBackend: Backend = {
-  getDevices: async () => deviceList(),
+  getDevices: async () => devices(),
+  selectDevice: async key => {
+    if (live()) fail('stop the recording before changing the device');
+    const next = key === null ? null : sims.find(s => plugged && s.desc.id === key) ?? fail(`device ${key} is not plugged in`);
+    wanted = key; active = null;
+    emit('devices', devices());
+    // Opening a device takes a moment.
+    if (next) window.setTimeout(() => { if (wanted === key) { active = next; emit('devices', devices()); } }, 300);
+  },
   command: async (name, args) => apply(name, args),
   listen: async (name, handler) => {
     const set = listeners.get(name) ?? new Set();
@@ -304,50 +319,46 @@ export const mockBackend: Backend = {
     listeners.set(name, set);
     return () => { set.delete(handler as (value: never) => void); };
   },
+  recordings: async () => [...recs.values()].map(r => r.info),
   startRecording: async (device, channels) => {
     const s = sim(device);
     for (const name of channels) if (!s.desc.channels.some(ch => ch.name === name)) fail(`unknown channel ${name}`);
-    reset();
-    recordingSim = s;
+    stop();
     const rx = s.desc.channels.find(ch => ch.kind === 'Bytes' && !ch.set);
-    const selected = withChannels([...channels, ...(s.state.uart_open && rx ? [rx.name] : [])]);
-    recording = { active: true, duration_s: 0, samples: Object.fromEntries(selected.map(ch => [ch.name, 0])), gaps: 0, channels: selected, device: s.desc.id };
-    emit('recording', recording);
-    return recording;
+    return newRec(s, pick(s, [...channels, ...(s.state.uart_open && rx ? [rx.name] : [])]), true).info;
   },
-  stopRecording: async () => { if (recording) { recording = { ...recording, active: false }; emit('recording', recording); } return recording; },
-  recordingInfo: async () => recording,
-  getView: async (ch, t0, t1, px) => mockView(ch, t0, t1, px),
-  getStats: async (t0, t1) => mockStats(t0, t1),
-  getUart: async (t0, t1) => uartLog.filter(x => x.t >= t0 && x.t <= t1),
-  saveRecording: async () => {},
-  loadRecording: async () => { recording = recording ? { ...recording, active: false, device: null } : cannedRecording(); recordingSim = null; emit('recording', recording); return recording; },
-  exportRecording: async () => {},
-  getEdges: async (t0, t1) => edges.filter(x => x.t >= t0 && x.t <= t1),
+  stopRecording: async () => stop(),
+  closeRecording: async id => { if (live()?.info.id === id) stop(); recs.delete(id); },
+  getView: async (id, ch, t0, t1, px) => mockView(rec(id), ch, t0, t1, px),
+  getStats: async (id, t0, t1) => mockStats(rec(id), t0, t1),
+  getUart: async (id, t0, t1) => recs.get(id)?.uart.filter(x => x.t >= t0 && x.t <= t1) ?? [],
+  getEdges: async (id, t0, t1) => recs.get(id)?.edges.filter(x => x.t >= t0 && x.t <= t1) ?? [],
+  saveRecording: async id => { rec(id); },
+  loadRecording: async () => cannedRecording(),
+  exportRecording: async id => { rec(id); },
   uartOpen: async (device, baud) => {
     const s = sim(device);
     if (!s.desc.uart) fail('device has no UART');
     if (!Number.isInteger(baud) || baud <= 0) fail('invalid baud rate');
     s.state = { ...s.state, uart_open: true }; changed(s);
-    const rx = s.desc.channels.find(ch => ch.kind === 'Bytes' && !ch.set);
-    if (recording?.active && recordingSim === s && rx && !recording.channels.includes(rx)) recording = { ...recording, channels: withChannels([...recording.channels.map(ch => ch.name), rx.name]), samples: { ...recording.samples, [rx.name]: 0 } };
+    const r = live(), rx = s.desc.channels.find(ch => ch.kind === 'Bytes' && !ch.set);
+    if (r?.sim === s && rx && !r.info.channels.includes(rx)) update(r, { channels: pick(s, [...r.info.channels.map(ch => ch.name), rx.name]), samples: { ...r.info.samples, [rx.name]: 0 } });
   },
   uartClose: async device => { const s = sim(device); s.state = { ...s.state, uart_open: false }; changed(s); },
   uartSend: async (device, text) => {
     const s = sim(device);
     if (!s.state.uart_open) fail('UART closed');
-    if (!recording?.active || recordingSim !== s) return;
+    const r = live();
+    if (r?.sim !== s) return;
     const tx = s.desc.channels.find(ch => ch.kind === 'Bytes' && ch.set), rx = s.desc.channels.find(ch => ch.kind === 'Bytes' && !ch.set);
-    const t = recording.duration_s, bytes = Array.from(new TextEncoder().encode(text));
-    uartLog.push({ t, dir: 'tx', bytes });
-    if (tx) recording = { ...recording, channels: withChannels([...recording.channels.map(ch => ch.name), tx.name]), samples: { ...recording.samples, [tx.name]: (recording.samples[tx.name] ?? 0) + bytes.length } };
+    const t = r.info.duration_s, bytes = Array.from(new TextEncoder().encode(text));
+    r.uart.push({ t, dir: 'tx', bytes });
+    if (tx) update(r, { channels: pick(s, [...r.info.channels.map(ch => ch.name), tx.name]), samples: { ...r.info.samples, [tx.name]: (r.info.samples[tx.name] ?? 0) + bytes.length } });
     window.setTimeout(() => {
-      if (!recording?.active || !rx) return;
+      if (!r.info.active || !rx) return;
       // The device splits the echo over 1 ms packets; the recorder joins them back into one chunk.
-      uartLog.push({ t: t + .001, dir: 'rx', bytes });
-      recording = { ...recording, samples: { ...recording.samples, [rx.name]: (recording.samples[rx.name] ?? 0) + bytes.length } };
-      emit('recording', recording);
+      r.uart.push({ t: t + .001, dir: 'rx', bytes });
+      update(r, { samples: { ...r.info.samples, [rx.name]: (r.info.samples[rx.name] ?? 0) + bytes.length } });
     }, 1);
-    emit('recording', recording);
   },
 };

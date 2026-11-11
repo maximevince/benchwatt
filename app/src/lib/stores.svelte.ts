@@ -2,7 +2,7 @@ import { toast } from 'svelte-sonner';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { documentDir, join } from '@tauri-apps/api/path';
-import { backend, type Alert, type Command, type Device, type DeviceState, type Monitor, type RecordingInfo, type AllStats, type UartChunk, type Edge } from './backend';
+import { backend, type Alert, type Command, type Device, type Devices, type DeviceState, type FoundDevice, type Monitor, type OutputDesc, type RecordingInfo, type AllStats, type UartChunk, type Edge } from './backend';
 import { defaultRecordChannels, lanesFor, orderedEntries, rxChannel } from './channels';
 
 // File dialogs open in the folder used last (per machine), else ~/Documents.
@@ -17,14 +17,57 @@ function rememberDir(path: string) {
   if (end > 0) try { localStorage.setItem(LAST_DIR_KEY, path.slice(0, end)); } catch { /* storage unavailable */ }
 }
 
+const LAST_DEVICE_KEY = 'benchwatt.device';
+const baseName = (path: string) => path.split(/[\\/]/).pop() ?? path;
+
 export type AlertEntry = Alert & { key: number; time: string };
+type Range = [number, number];
+/** One open recording and how it is being looked at. Each is a tab above the plot. */
+export class Tab {
+  info = $state<RecordingInfo>(null!);
+  /** Where it was saved or opened from; empty until then. */
+  path = $state('');
+  unsaved = $state(false);
+  /** The outputs of the device it was recorded from, for their names and colours. A file does not carry them yet. */
+  outputs: OutputDesc[];
+  /** When the capture started, for the title of a recording that has no file. */
+  started: string;
+  hiddenLanes = $state<string[]>([]);
+  range = $state<Range | null>(null);
+  viewRange = $state<Range>([0, 10]);
+  stats = $state<AllStats | null>(null);
+  uart = $state<UartChunk[]>([]);
+  edges = $state<Edge[]>([]);
+  marker = $state<number | null>(null);
+  hoverMarker = $state<number | null>(null);
+  focusedUartTime = $state<number | null>(null);
+  follow = $state(true);
+  detailsSeq = 0;
+  statsSeq = 0;
+  constructor(info: RecordingInfo, outputs: OutputDesc[] = [], path = '') {
+    this.info = info; this.outputs = outputs; this.path = path;
+    this.started = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    if (!info.active) this.viewRange = [0, Math.max(info.duration_s, .001)];
+  }
+  get id() { return this.info.id; }
+  get fileName() { return baseName(this.path); }
+  /** The instrument it was made with, e.g. `GPP-4323`. */
+  get source() { return this.info.source.model ?? this.info.source.kind ?? ''; }
+  get title() { return this.fileName || `${this.source || 'Recording'} ${this.started}`; }
+}
 class AppState {
-  devices = $state<Device[]>([]);
-  monitors = $state<Record<string, Monitor>>({});
-  selectedId = $state<string | null>(null);
-  /** The device whose panels the sidebar shows: the chosen one while it is present, else the first. */
-  selected = $derived(this.devices.find(d => d.desc.id === this.selectedId) ?? this.devices[0] ?? null);
-  monitor = $derived(this.selected ? this.monitors[this.selected.desc.id] ?? null : null);
+  /** Supported instruments that are plugged in. */
+  found = $state<FoundDevice[]>([]);
+  /** The key of the device the user chose; it is opened whenever it is plugged in. */
+  wanted = $state<string | null>(null);
+  /** The device the app works with, once it is open. Only one is at a time. */
+  selected = $state<Device | null>(null);
+  /** Why the chosen device could not be opened. */
+  deviceError = $state<string | null>(null);
+  connecting = $derived(!!this.wanted && !this.selected && !this.deviceError && this.found.some(f => f.key === this.wanted));
+  /** Set once the user disconnects, so a device is not picked for them again. */
+  private released = false;
+  monitor = $state<Monitor | null>(null);
   /** Record channel choices per device id; a device without a choice records its defaults. */
   recordChoice = $state<Record<string, string[]>>({});
   alerts = $state<AlertEntry[]>([]);
@@ -32,35 +75,50 @@ class AppState {
   error = $state('');
   theme = $state<'system' | 'dark' | 'light'>('system');
   systemDark = $state(false);
-  unsaved = $state(false);
   closingApproved = false;
-  fileName = $state('');
   dialog = $state<'discard' | 'export' | 'shortcuts' | 'about' | 'device' | null>(null);
+  /** What the discard dialog asks. */
+  discardText = $state('');
   private dialogResolve?: (value: boolean) => void;
-  marker = $state<number | null>(null);
-  hoverMarker = $state<number | null>(null);
-  focusedUartTime = $state<number | null>(null);
-  follow = $state(true);
   drawerTab = $state('alerts');
   showPower = $state(false);
   drawerOpen = $state(true);
-  recording = $state<RecordingInfo | null>(null);
+  tabs = $state<Tab[]>([]);
+  tabId = $state<number | null>(null);
+  /** The recording on screen. */
+  tab = $derived(this.tabs.find(t => t.id === this.tabId) ?? null);
+  /** The recording that is being captured, on screen or not. */
+  live = $derived(this.tabs.find(t => t.info.active) ?? null);
+  anyUnsaved = $derived(this.tabs.some(t => t.unsaved));
+  // The state of the recording on screen, under the names the components use.
+  get recording() { return this.tab?.info ?? null; }
+  get fileName() { return this.tab?.fileName ?? ''; }
+  get unsaved() { return this.tab?.unsaved ?? false; }
+  get hiddenLanes() { return this.tab?.hiddenLanes ?? []; }
+  set hiddenLanes(value) { if (this.tab) this.tab.hiddenLanes = value; }
+  get range() { return this.tab?.range ?? null; }
+  set range(value) { if (this.tab) this.tab.range = value; }
+  get viewRange(): Range { return this.tab?.viewRange ?? [0, 10]; }
+  set viewRange(value) { if (this.tab) this.tab.viewRange = value; }
+  get stats() { return this.tab?.stats ?? null; }
+  get uart() { return this.tab?.uart ?? []; }
+  get edges() { return this.tab?.edges ?? []; }
+  get marker() { return this.tab?.marker ?? null; }
+  set marker(value) { if (this.tab) this.tab.marker = value; }
+  get hoverMarker() { return this.tab?.hoverMarker ?? null; }
+  set hoverMarker(value) { if (this.tab) this.tab.hoverMarker = value; }
+  get focusedUartTime() { return this.tab?.focusedUartTime ?? null; }
+  set focusedUartTime(value) { if (this.tab) this.tab.focusedUartTime = value; }
+  get follow() { return this.tab?.follow ?? true; }
+  set follow(value) { if (this.tab) this.tab.follow = value; }
   get recordChannels(): string[] { const d = this.selected; return d ? this.recordChoice[d.desc.id] ?? defaultRecordChannels(d.desc) : []; }
   set recordChannels(channels: string[]) { const d = this.selected; if (d) this.recordChoice = { ...this.recordChoice, [d.desc.id]: channels }; }
-  /** Outputs of the device the recording comes from, while it is connected (their colours and names tag the channels). */
-  recordingOutputs = $derived(this.devices.find(d => d.desc.id === this.recording?.device)?.desc.outputs ?? []);
-  /** Plot lanes of the current recording, from its own channel list. */
+  /** Outputs of the device the recording on screen was made with (their colours and names tag the channels). */
+  recordingOutputs = $derived(this.tab?.outputs ?? []);
+  /** Plot lanes of the recording on screen, from its own channel list. */
   lanes = $derived(lanesFor(this.recording?.channels ?? [], this.recordingOutputs));
-  hiddenLanes = $state<string[]>([]);
-  range = $state<[number, number] | null>(null);
-  viewRange = $state<[number, number]>([0, 10]);
-  stats = $state<AllStats | null>(null);
-  uart = $state<UartChunk[]>([]);
-  edges = $state<Edge[]>([]);
   get uartOpen() { return this.selected?.state?.uart_open ?? false; }
   private key = 0;
-  private detailsSeq = 0;
-  private statsSeq = 0;
   get darkTheme() { return this.theme === 'dark' || (this.theme === 'system' && this.systemDark); }
   get disabled() { return !this.selected?.state || this.busy; }
   initTheme() {
@@ -81,7 +139,7 @@ class AppState {
     const off = await Promise.all([
       backend.listen('devices', value => this.setDevices(value)),
       backend.listen('state', value => this.setState(value.device, value.state)),
-      backend.listen('monitor', value => { if (this.devices.some(d => d.desc.id === value.device)) this.monitors = { ...this.monitors, [value.device]: value }; }),
+      backend.listen('monitor', value => { if (this.selected?.desc.id === value.device) this.monitor = value; }),
       backend.listen('alert', value => {
         const entry = { ...value, key: ++this.key, time: new Date().toLocaleTimeString() };
         this.alerts = [entry, ...this.alerts].slice(0, 100);
@@ -89,22 +147,41 @@ class AppState {
         if (value.severity === 'warning') toast.warning(message);
         else toast.error(message);
       }),
-      backend.listen('recording', value => { if (this.recording?.active && this.fileName && value.duration_s > this.recording.duration_s) this.unsaved = true; this.recording = value; }),
+      backend.listen('recording', value => {
+        const tab = this.tabs.find(t => t.id === value.id);
+        if (!tab) return;
+        if (tab.info.active && value.duration_s > tab.info.duration_s) tab.unsaved = true;
+        tab.info = value;
+      }),
     ]);
     try {
       this.setDevices(await backend.getDevices());
-      this.recording = await backend.recordingInfo();
+      // Recordings outlive a reload of the window.
+      this.tabs = (await backend.recordings()).map(info => new Tab(info));
+      this.tabId = this.tabs.at(-1)?.id ?? null;
     } catch (cause) { this.report(cause); }
     return () => { off.forEach(fn => fn()); media.removeEventListener('change', changed); };
   }
-  private setDevices(devices: Device[]) {
-    this.devices = devices;
-    const ids = new Set(devices.map(d => d.desc.id));
-    this.monitors = Object.fromEntries(Object.entries(this.monitors).filter(([id]) => ids.has(id)));
-    if (this.selectedId && !ids.has(this.selectedId)) this.selectedId = null;
+  private setDevices(devices: Devices) {
+    this.found = devices.found; this.wanted = devices.wanted; this.deviceError = devices.error;
+    if (devices.active?.desc.id !== this.selected?.desc.id) this.monitor = null;
+    this.selected = devices.active;
+    if (devices.wanted || this.released) return;
+    // Nothing chosen yet: take the device used last time, or the only one there is.
+    let last: string | null = null;
+    try { last = localStorage.getItem(LAST_DEVICE_KEY); } catch { /* storage unavailable */ }
+    const pick = devices.found.find(f => f.key === last) ?? devices.found.find(f => f.kind === last?.split('@')[0]) ?? (devices.found.length === 1 ? devices.found[0] : null);
+    if (pick) void this.selectDevice(pick.key);
   }
-  private setState(id: string, state: DeviceState) { this.devices = this.devices.map(d => d.desc.id === id ? { ...d, state } : d); }
-  select(id: string) { this.selectedId = id; }
+  private setState(id: string, state: DeviceState) { if (this.selected?.desc.id === id) this.selected = { ...this.selected, state }; }
+  /** Makes this the device the app works with; `null` lets go of the current one. */
+  async selectDevice(key: string | null) {
+    if (key === this.wanted && !this.deviceError) return;
+    if (this.live) { toast.info('Stop the recording before changing the device'); return; }
+    this.released = key === null;
+    if (key) try { localStorage.setItem(LAST_DEVICE_KEY, key); } catch { /* storage unavailable */ }
+    try { await backend.selectDevice(key); } catch (cause) { this.report(cause); }
+  }
   /** Applies a command to the selected device. */
   async command(name: Command, args: Record<string, unknown>) {
     const device = this.selected?.desc.id;
@@ -115,60 +192,89 @@ class AppState {
     finally { this.busy = false; }
   }
   report(cause: unknown) { this.error = String(cause); toast.error(this.error); }
-  /** Toggles the first output of the selected device. */
+  /** Toggles the output of a device that has exactly one; with several there is no default. */
   async toggleOutput() {
-    const on = !this.selected?.state?.outputs[0]?.enabled, out = this.selected?.desc.outputs[0]?.n;
-    return out !== undefined && await this.command('set_output', { out, on }) ? on : null;
+    const outputs = this.selected?.desc.outputs ?? [];
+    if (outputs.length !== 1) return null;
+    const on = !this.selected?.state?.outputs[0]?.enabled;
+    return await this.command('set_output', { out: outputs[0].n, on }) ? on : null;
   }
+  /** Stops the running capture, or starts one in a new tab. */
   async toggleRecording() {
     try {
-      if (this.recording?.active) { this.recording = await backend.stopRecording(); return; }
+      if (this.live) { await backend.stopRecording(); return; }
       const device = this.selected;
       if (!device) return;
-      if (!await this.confirmDiscard()) return;
       // A device may only stream received UART bytes with its UART open, so recording them opens it.
       const rx = rxChannel(device.desc.channels);
       if (device.desc.uart && rx && this.recordChannels.includes(rx.name) && !this.uartOpen) await this.toggleUart();
-      this.recording = await backend.startRecording(device.desc.id, this.recordChannels);
-      this.hiddenLanes = [];
-      this.range = null;
-      this.viewRange = [0, 10];
-      this.stats = null;
-      this.uart = [];
-      this.edges = [];
-      this.fileName = ''; this.unsaved = true;
+      const tab = new Tab(await backend.startRecording(device.desc.id, this.recordChannels), device.desc.outputs);
+      tab.unsaved = true;
+      this.tabs.push(tab); this.tabId = tab.id;
     } catch (cause) { this.report(cause); }
   }
-  async confirmDiscard(): Promise<boolean> {
-    if (!this.recording || !this.unsaved) return true;
-    this.dialog = 'discard';
+  showTab(tab: Tab) { this.tabId = tab.id; }
+  /** Shows the tab `step` places to the right, wrapping around. */
+  cycleTab(step: number) {
+    const at = this.tabs.findIndex(t => t.id === this.tabId), n = this.tabs.length;
+    if (n > 1) this.tabId = this.tabs[(at + step + n) % n].id;
+  }
+  async closeTab(tab: Tab | null = this.tab) {
+    if (!tab) return;
+    if (tab.info.active && !await this.confirm(`“${tab.title}” is still recording. Closing it stops the recording and discards it.`)) return;
+    else if (!tab.info.active && tab.unsaved && !await this.confirm(`“${tab.title}” has not been saved.`)) return;
+    try { await backend.closeRecording(tab.id); } catch (cause) { this.report(cause); return; }
+    const at = this.tabs.indexOf(tab);
+    this.tabs = this.tabs.filter(t => t !== tab);
+    if (this.tabId === tab.id) this.tabId = (this.tabs[at] ?? this.tabs[at - 1])?.id ?? null;
+  }
+  private confirm(text: string): Promise<boolean> {
+    this.discardText = text; this.dialog = 'discard';
     return new Promise(resolve => { this.dialogResolve = resolve; });
+  }
+  /** Asks before unsaved recordings are lost by leaving the app. */
+  async confirmQuit(): Promise<boolean> {
+    const unsaved = this.tabs.filter(t => t.unsaved);
+    if (!unsaved.length) return true;
+    return this.confirm(unsaved.length === 1 ? `“${unsaved[0].title}” has not been saved.` : `${unsaved.length} recordings have not been saved.`);
   }
   resolveDialog(value: boolean) { this.dialogResolve?.(value); this.dialogResolve = undefined; this.dialog = null; }
   private mock() { return !('__TAURI_INTERNALS__' in window); }
-  async saveRecording() {
-    if (!this.recording) return;
-    try { const path = this.mock() ? 'mock.bwrec' : await save({ defaultPath: await inLastDir(this.fileName || 'recording.bwrec'), filters: [{ name: 'Benchwatt recording', extensions: ['bwrec'] }] });
-      if (!path) return; rememberDir(path); await backend.saveRecording(path); this.fileName = path.split(/[\\/]/).pop() ?? path; this.unsaved = false; toast.success(this.mock() ? 'Mock recording saved' : 'Recording saved');
+  /** Saves the recording on screen to its file; asks for one the first time or with `as`. */
+  async saveRecording(as = false) {
+    const tab = this.tab;
+    if (!tab) return;
+    try {
+      let path = as ? '' : tab.path;
+      if (!path) {
+        const chosen = this.mock() ? 'mock.bwrec' : await save({ defaultPath: await inLastDir(tab.fileName || 'recording.bwrec'), filters: [{ name: 'Benchwatt recording', extensions: ['bwrec'] }] });
+        if (!chosen) return;
+        path = chosen; rememberDir(path);
+      }
+      const growing = tab.info.active;
+      await backend.saveRecording(tab.id, path); tab.path = path; tab.unsaved = growing; toast.success(`Saved ${tab.fileName}`);
     } catch (cause) { this.report(cause); }
   }
+  /** Opens a saved recording in a new tab. */
   async openRecording() {
-    if (!await this.confirmDiscard()) return;
     try { const path = this.mock() ? 'mock.bwrec' : await open({ multiple: false, defaultPath: await inLastDir(''), filters: [{ name: 'Benchwatt recording', extensions: ['bwrec'] }] });
-      if (typeof path !== 'string') return; rememberDir(path); this.recording = await backend.loadRecording(path); this.fileName = path.split(/[\\/]/).pop() ?? path; this.unsaved = false; this.hiddenLanes = []; this.range = null; this.uart = []; this.edges = []; this.viewRange = [0, Math.max(this.recording.duration_s, .001)]; await this.refreshDetails();
+      if (typeof path !== 'string') return; rememberDir(path);
+      const tab = new Tab(await backend.loadRecording(path), [], path);
+      this.tabs.push(tab); this.tabId = tab.id; await this.refreshDetails();
     } catch (cause) { this.report(cause); }
   }
   async exportRecording(extension: 'csv' | 'sr', selected = false) {
-    if (!this.recording) return;
-    try { const path = this.mock() ? `mock.${extension}` : await save({ defaultPath: await inLastDir(`export.${extension}`), filters: [{ name: extension === 'csv' ? 'CSV' : 'sigrok session', extensions: [extension] }] });
-      if (!path) return; rememberDir(path); await backend.exportRecording(path, ...(selected && this.range ? this.range : [])); toast.success(this.mock() ? 'Mock export complete' : 'Export complete');
+    const tab = this.tab;
+    if (!tab) return;
+    try { const path = this.mock() ? `mock.${extension}` : await save({ defaultPath: await inLastDir(`${tab.fileName.replace(/\.bwrec$/, '') || 'export'}.${extension}`), filters: [{ name: extension === 'csv' ? 'CSV' : 'sigrok session', extensions: [extension] }] });
+      if (!path) return; rememberDir(path); await backend.exportRecording(tab.id, path, ...(selected && tab.range ? tab.range : [])); toast.success(`Exported ${baseName(path)}`);
     } catch (cause) { this.report(cause); }
   }
   async requestExport(extension: 'csv' | 'sr') {
     if (this.range) { this.exportFormat = extension; this.dialog = 'export'; } else await this.exportRecording(extension);
   }
   exportFormat = $state<'csv' | 'sr'>('csv');
-  async quit() { if (!await this.confirmDiscard()) return; if (this.mock()) toast.info('Quit is available in the desktop app'); else { this.closingApproved = true; await getCurrentWindow().destroy(); } }
+  async quit() { if (!await this.confirmQuit()) return; if (this.mock()) toast.info('Quit is available in the desktop app'); else { this.closingApproved = true; await getCurrentWindow().destroy(); } }
   selectAll() { if (this.recording) { this.range = [0,this.recording.duration_s]; void this.refreshDetails(); } }
   clearSelection() { this.range = null; void this.refreshDetails(); }
   zoom(factor: number) { const [a,b] = this.viewRange; const mid=(a+b)/2, span=Math.max(.000001,(b-a)*factor); this.viewRange=[Math.max(0,mid-span/2), Math.max(span,mid+span/2)]; this.follow=false; }
@@ -179,33 +285,37 @@ class AppState {
     const id = device.desc.id, open = !device.state.uart_open;
     try {
       if (open) await backend.uartOpen(id, this.baud); else await backend.uartClose(id);
-      const state = this.devices.find(d => d.desc.id === id)?.state; if (state) this.setState(id, { ...state, uart_open: open });
+      const state = this.selected?.desc.id === id ? this.selected.state : null; if (state) this.setState(id, { ...state, uart_open: open });
       if (open) { this.drawerTab='uart'; this.drawerOpen=true; }
     } catch (cause) { this.report(cause); }
   }
   async uartSend(text: string) { const id = this.selected?.desc.id; if (!id) throw new Error('No device'); await backend.uartSend(id, text); }
   baud = $state(115200);
   async copyStats() { if (!this.stats) return; const rows=[['channel','count','min','max','mean','rms','integral'].join('\t'),...orderedEntries(this.stats.channels, this.recording?.channels ?? []).map(([ch,s]) => [this.recording?.channels.find(c => c.name === ch)?.label ?? ch,s.count,s.min,s.max,s.mean,s.rms,s.integral].join('\t'))]; await navigator.clipboard.writeText(rows.join('\n')); toast.success('Selection stats copied'); }
+  /** Statistics of the selection in the recording on screen. */
   async refreshStats() {
-    if (!this.recording || !this.range || this.range[0] === this.range[1]) return;
-    const [t0, t1] = this.range, seq = ++this.statsSeq;
-    try { const stats = await backend.getStats(t0, t1); if (seq === this.statsSeq) this.stats = stats; }
-    catch (cause) { if (seq === this.statsSeq) this.report(cause); }
+    const tab = this.tab;
+    if (!tab || !tab.range || tab.range[0] === tab.range[1]) return;
+    const [t0, t1] = tab.range, seq = ++tab.statsSeq;
+    try { const stats = await backend.getStats(tab.id, t0, t1); if (seq === tab.statsSeq) tab.stats = stats; }
+    catch (cause) { if (seq === tab.statsSeq && this.tabs.includes(tab)) this.report(cause); }
   }
+  /** Statistics, UART bytes and digital edges of the recording on screen. */
   async refreshDetails() {
-    if (!this.recording) return;
-    const [t0, t1] = this.range ?? this.viewRange;
+    const tab = this.tab;
+    if (!tab) return;
+    const [t0, t1] = tab.range ?? tab.viewRange;
     try {
-      const seq = ++this.detailsSeq, statsSeq = ++this.statsSeq;
-      const uartFrom = this.uart.at(-1)?.t ?? 0;
+      const seq = ++tab.detailsSeq, statsSeq = ++tab.statsSeq;
+      const uartFrom = tab.uart.at(-1)?.t ?? 0;
       const [stats, tail, edges] = await Promise.all([
-        backend.getStats(t0, t1), backend.getUart(uartFrom, this.recording.duration_s), backend.getEdges(0, this.recording.duration_s),
+        backend.getStats(tab.id, t0, t1), backend.getUart(tab.id, uartFrom, tab.info.duration_s), backend.getEdges(tab.id, 0, tab.info.duration_s),
       ]);
-      if (seq !== this.detailsSeq) return;
-      if (statsSeq === this.statsSeq) this.stats = stats;
-      this.uart = [...this.uart.filter(x => x.t < uartFrom), ...tail];
-      this.edges = edges;
-    } catch (cause) { this.report(cause); }
+      if (seq !== tab.detailsSeq) return;
+      if (statsSeq === tab.statsSeq) tab.stats = stats;
+      tab.uart = [...tab.uart.filter(x => x.t < uartFrom), ...tail];
+      tab.edges = edges;
+    } catch (cause) { if (this.tabs.includes(tab)) this.report(cause); }
   }
 }
 export const app = new AppState();

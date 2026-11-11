@@ -12,7 +12,7 @@
   let { device, index }: { device: Device; index: number } = $props();
   const output = $derived(device.desc.outputs[index]);
   const state = $derived(device.state?.outputs[index] ?? null);
-  const readings = $derived(app.monitors[device.desc.id]?.readings ?? {});
+  const readings = $derived(app.monitor?.readings ?? {});
   const volts = $derived(voltageField(output.voltage));
   const limit = $derived(output.current_limit && currentField(output.current_limit));
   const steps = $derived(output.voltage_steps.map(String));

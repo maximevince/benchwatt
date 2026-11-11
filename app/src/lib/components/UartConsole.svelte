@@ -70,7 +70,7 @@
     {#if query && filtered.length === 0 && all.length > 0}<p class="empty-state">No lines match “{query}”</p>
     {:else if !app.selected?.desc.uart && filtered.length === 0}<p class="empty-state">{app.selected ? 'This device has no UART' : 'No UART data'}</p>
     {:else if !app.uartOpen && filtered.length === 0}<p class="empty-state">Open the UART to capture RX</p>
-    {:else if !app.recording?.active && filtered.length === 0}<p class="empty-state">RX is captured while recording (press R)</p>{/if}
+    {:else if !app.live && filtered.length === 0}<p class="empty-state">RX is captured while recording (press R)</p>{/if}
     <div style:height={filtered.length*rowHeight+'px'} class="uart-virtual-space">
       {#each visible as line, i (line.id)}
         <ContextMenu><ContextMenuTrigger class={'uart-line'+(line.dir === 'tx' ? ' tx' : '')+(highlighted(line) ? ' selected' : '')+(app.focusedUartTime === line.t ? ' hovered' : '')} style={'top:'+((first+i)*rowHeight)+'px'} onclick={e => select(line,e.shiftKey)} oncontextmenu={() => contextLine=line} onmouseenter={() => app.hoverMarker=line.t} onmouseleave={() => app.hoverMarker=null}>

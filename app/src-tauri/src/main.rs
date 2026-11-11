@@ -13,22 +13,34 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc::{Receiver, RecvTimeoutError},
+        mpsc::{self, Receiver, RecvTimeoutError, Sender},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager};
 
-/// Lock order: control → Open::dev → recording → devices → Open::listed → threads.
+/// Lock order: control → Open::dev → recordings → devices → Open::listed → threads.
 /// Only device calls may block while one is held.
 struct App {
-    /// Serialises starting, stopping and loading recordings.
+    /// Serialises starting and stopping recordings and choosing the device.
     control: Mutex<()>,
-    recording: Mutex<Rec>,
-    devices: Mutex<Vec<Arc<Open>>>,
+    recordings: Mutex<Recs>,
+    devices: Mutex<Devices>,
     threads: Mutex<Vec<JoinHandle<()>>>,
     running: AtomicBool,
+    /// Wakes the scanner when the chosen device changes.
+    wake: Mutex<Sender<()>>,
+}
+/// What is plugged in and the one device the app works with.
+#[derive(Default)]
+struct Devices {
+    found: Vec<Found>,
+    /// The device the user chose. It is opened whenever it is plugged in.
+    wanted: Option<Found>,
+    open: Option<Arc<Open>>,
+    /// Why the chosen device could not be opened.
+    error: Option<String>,
 }
 struct Open {
     found: Found,
@@ -36,15 +48,41 @@ struct Open {
     dev: Mutex<Box<dyn Device>>,
     listed: Mutex<Listed>,
     uart_open: AtomicBool,
+    /// Set when the device went away or is being closed; its worker then ends.
     gone: AtomicBool,
 }
+/// The open recordings, each a tab in the window. At most one has a capture.
 #[derive(Default)]
+struct Recs {
+    last_id: u32,
+    list: BTreeMap<u32, Rec>,
+}
 struct Rec {
-    rec: Option<Recording>,
+    rec: Recording,
     capture: Option<Capture>,
     /// The device the recording came from, while it is open.
     device: Option<String>,
     meta: file::Meta,
+}
+impl Recs {
+    fn add(&mut self, rec: Rec) -> RecordingInfo {
+        self.last_id += 1;
+        let info = rec_info(self.last_id, &rec);
+        self.list.insert(self.last_id, rec);
+        info
+    }
+    fn get(&self, id: u32) -> Result<&Rec, String> {
+        self.list
+            .get(&id)
+            .ok_or_else(|| "this recording is closed".into())
+    }
+    /// The recording that is being captured into.
+    fn live(&mut self) -> Option<(u32, &mut Rec)> {
+        self.list
+            .iter_mut()
+            .find(|(_, r)| r.capture.is_some())
+            .map(|(&id, r)| (id, r))
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -74,6 +112,20 @@ struct Listed {
     state: Option<DeviceState>,
 }
 #[derive(Clone, Serialize)]
+struct FoundInfo {
+    key: String,
+    kind: &'static str,
+    name: &'static str,
+    port: String,
+}
+#[derive(Clone, Serialize)]
+struct DevicesInfo {
+    found: Vec<FoundInfo>,
+    wanted: Option<String>,
+    active: Option<Listed>,
+    error: Option<String>,
+}
+#[derive(Clone, Serialize)]
 struct StateEvent<'a> {
     device: &'a str,
     state: &'a DeviceState,
@@ -95,12 +147,15 @@ struct Alert<'a> {
 }
 #[derive(Clone, Serialize)]
 struct RecordingInfo {
+    id: u32,
     active: bool,
     duration_s: f64,
     samples: HashMap<String, usize>,
     gaps: usize,
     channels: Vec<ChannelDesc>,
     device: Option<String>,
+    /// The instrument it was made with, as stored in the file.
+    source: file::DeviceInfo,
 }
 #[derive(Serialize)]
 struct UartChunk {
@@ -112,23 +167,43 @@ struct UartChunk {
 fn text(e: impl Display) -> String {
     e.to_string()
 }
-fn rec_info(r: &Rec) -> Option<RecordingInfo> {
-    r.rec.as_ref().map(|rec| RecordingInfo {
-        active: rec.active(),
-        duration_s: rec.duration(),
-        samples: rec.sample_counts(),
-        gaps: rec.gaps().len(),
-        channels: rec.specs(),
+fn rec_info(id: u32, r: &Rec) -> RecordingInfo {
+    RecordingInfo {
+        id,
+        active: r.rec.active(),
+        duration_s: r.rec.duration(),
+        samples: r.rec.sample_counts(),
+        gaps: r.rec.gaps().len(),
+        channels: r.rec.specs(),
         device: r.device.clone(),
-    })
+        source: r.meta.device.clone(),
+    }
 }
-fn listing(app: &AppHandle) -> Vec<Listed> {
+/// A device's id: its kind and where it is plugged in.
+fn key(found: &Found) -> String {
+    format!("{}@{}", found.kind, found.port)
+}
+fn listing(app: &AppHandle) -> DevicesInfo {
     let state = app.state::<App>();
     let devices = state.devices.lock().unwrap();
-    devices
-        .iter()
-        .map(|o| o.listed.lock().unwrap().clone())
-        .collect()
+    DevicesInfo {
+        found: devices
+            .found
+            .iter()
+            .map(|f| FoundInfo {
+                key: key(f),
+                kind: f.kind,
+                name: f.name(),
+                port: f.port.clone(),
+            })
+            .collect(),
+        wanted: devices.wanted.as_ref().map(key),
+        active: devices
+            .open
+            .as_ref()
+            .map(|o| o.listed.lock().unwrap().clone()),
+        error: devices.error.clone(),
+    }
 }
 fn emit_devices(app: &AppHandle) {
     let _ = app.emit("devices", listing(app));
@@ -140,6 +215,7 @@ fn find_open(app: &AppHandle, id: &str) -> Result<Arc<Open>, String> {
     let state = app.state::<App>();
     let devices = state.devices.lock().unwrap();
     devices
+        .open
         .iter()
         .find(|o| o.id == id)
         .cloned()
@@ -224,8 +300,37 @@ fn set_uart_flag(app: &AppHandle, open: &Open, on: bool) {
 }
 
 #[tauri::command(async)]
-fn get_devices(app: AppHandle) -> Vec<Listed> {
+fn get_devices(app: AppHandle) -> DevicesInfo {
     listing(&app)
+}
+/// Choose the device to work with, or none. The scanner closes the previous
+/// one and opens this one; the frontend hears about it through `devices`.
+#[tauri::command(async)]
+fn select_device(app: AppHandle, device: Option<String>) -> Result<(), String> {
+    let state = app.state::<App>();
+    let _control = state.control.lock().unwrap();
+    if state.recordings.lock().unwrap().live().is_some() {
+        return Err("stop the recording before changing the device".into());
+    }
+    {
+        let mut devices = state.devices.lock().unwrap();
+        let wanted = match device {
+            Some(id) => Some(
+                devices
+                    .found
+                    .iter()
+                    .find(|f| key(f) == id)
+                    .cloned()
+                    .ok_or_else(|| format!("device {id} is not plugged in"))?,
+            ),
+            None => None,
+        };
+        devices.wanted = wanted;
+        devices.error = None;
+    }
+    emit_devices(&app);
+    let _ = state.wake.lock().unwrap().send(());
+    Ok(())
 }
 /// Run `op` on the device, then return its fresh state.
 fn apply(
@@ -359,15 +464,13 @@ fn uart_open(app: AppHandle, device: String, baud: u32) -> Result<(), String> {
     uart.open(baud).map_err(text)?;
     {
         let state = app.state::<App>();
-        let mut r = state.recording.lock().unwrap();
-        let r = &mut *r;
-        if r.device.as_deref() == Some(&open.id)
-            && r.capture.is_some()
-            && let Some(rec) = r.rec.as_mut()
-            && !rec.specs().iter().any(|c| c.id == uart.rx())
+        let mut recs = state.recordings.lock().unwrap();
+        if let Some((_, r)) = recs.live()
+            && r.device.as_deref() == Some(&open.id)
+            && !r.rec.specs().iter().any(|c| c.id == uart.rx())
             && let Some(rx) = dev.channels().into_iter().find(|c| c.id == uart.rx())
         {
-            rec.add_channel(rx);
+            r.rec.add_channel(rx);
         }
     }
     set_uart_flag(&app, &open, true);
@@ -389,12 +492,11 @@ fn uart_send(app: AppHandle, device: String, text: String) -> Result<(), String>
     let open = find_open(&app, &device)?;
     let dev = open.dev.lock().unwrap();
     let state = app.state::<App>();
-    let mut r = state.recording.lock().unwrap();
-    let r = &mut *r;
-    let rec = match r.device.as_deref() == Some(&open.id) && r.capture.is_some() {
-        true => r.rec.as_mut(),
-        false => None,
-    };
+    let mut recs = state.recordings.lock().unwrap();
+    let rec = recs
+        .live()
+        .filter(|(_, r)| r.device.as_deref() == Some(&open.id))
+        .map(|(_, r)| &mut r.rec);
     benchwatt_session::uart_write(dev.as_ref(), rec, text.as_bytes()).map_err(|e| e.to_string())
 }
 
@@ -402,8 +504,8 @@ fn uart_send(app: AppHandle, device: String, text: String) -> Result<(), String>
 fn stop_active(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<App>();
     let id = {
-        let r = state.recording.lock().unwrap();
-        r.capture.as_ref().and(r.device.clone())
+        let mut recs = state.recordings.lock().unwrap();
+        recs.live().and_then(|(_, r)| r.device.clone())
     };
     // A capture whose device is gone is ended by that device's worker.
     let Some(open) = id.and_then(|id| find_open(app, &id).ok()) else {
@@ -411,19 +513,23 @@ fn stop_active(app: &AppHandle) -> Result<(), String> {
     };
     let dev = open.dev.lock().unwrap();
     let (result, info) = {
-        let mut r = state.recording.lock().unwrap();
-        let r = &mut *r;
-        let (Some(capture), Some(rec)) = (r.capture.take(), r.rec.as_mut()) else {
+        let mut recs = state.recordings.lock().unwrap();
+        let Some((id, r)) = recs.live() else {
             return Ok(());
         };
-        (capture.stop(dev.as_ref(), rec), rec_info(r))
+        let Some(capture) = r.capture.take() else {
+            return Ok(());
+        };
+        (capture.stop(dev.as_ref(), &mut r.rec), rec_info(id, r))
     };
     let _ = app.emit("recording", info);
     result.map_err(text)
 }
 #[tauri::command(async)]
-fn recording_info(app: AppHandle) -> Option<RecordingInfo> {
-    rec_info(&app.state::<App>().recording.lock().unwrap())
+fn recordings(app: AppHandle) -> Vec<RecordingInfo> {
+    let state = app.state::<App>();
+    let recs = state.recordings.lock().unwrap();
+    recs.list.iter().map(|(&id, r)| rec_info(id, r)).collect()
 }
 #[tauri::command(async)]
 fn start_recording(
@@ -457,28 +563,39 @@ fn start_recording(
     }
     let (capture, rec) = Capture::start(dev.as_ref(), &names, false, None).map_err(text)?;
     let meta = benchwatt_session::meta(dev.as_ref());
-    let mut r = state.recording.lock().unwrap();
+    let mut recs = state.recordings.lock().unwrap();
     if open.gone.load(Ordering::SeqCst) {
         return Err(format!("device {device} is not connected"));
     }
-    *r = Rec {
-        rec: Some(rec),
+    Ok(recs.add(Rec {
+        rec,
         capture: Some(capture),
         device: Some(device),
         meta,
-    };
-    rec_info(&r).ok_or_else(|| "no recording".into())
+    }))
 }
 #[tauri::command(async)]
-fn stop_recording(app: AppHandle) -> Result<Option<RecordingInfo>, String> {
+fn stop_recording(app: AppHandle) -> Result<(), String> {
     let state = app.state::<App>();
     let _control = state.control.lock().unwrap();
-    stop_active(&app)?;
-    Ok(rec_info(&state.recording.lock().unwrap()))
+    stop_active(&app)
+}
+/// Close a recording's tab, ending its capture first if it is the live one.
+#[tauri::command(async)]
+fn close_recording(app: AppHandle, rec: u32) -> Result<(), String> {
+    let state = app.state::<App>();
+    let _control = state.control.lock().unwrap();
+    let live = state.recordings.lock().unwrap().live().map(|(id, _)| id);
+    if live == Some(rec) {
+        stop_active(&app)?;
+    }
+    state.recordings.lock().unwrap().list.remove(&rec);
+    Ok(())
 }
 #[tauri::command(async)]
 fn get_view(
     app: AppHandle,
+    rec: u32,
     ch: String,
     t0: f64,
     t1: f64,
@@ -488,8 +605,8 @@ fn get_view(
         return Err("invalid view range".into());
     }
     let state = app.state::<App>();
-    let guard = state.recording.lock().unwrap();
-    let rec = guard.rec.as_ref().ok_or("no recording")?;
+    let guard = state.recordings.lock().unwrap();
+    let rec = &guard.get(rec)?.rec;
     let view = rec
         .specs()
         .into_iter()
@@ -526,13 +643,13 @@ struct AllStats {
     energy: Option<rec::Energy>,
 }
 #[tauri::command(async)]
-fn get_stats(app: AppHandle, t0: f64, t1: f64) -> Result<AllStats, String> {
+fn get_stats(app: AppHandle, rec: u32, t0: f64, t1: f64) -> Result<AllStats, String> {
     if !t0.is_finite() || !t1.is_finite() || t1 <= t0 {
         return Err("invalid stats range".into());
     }
     let state = app.state::<App>();
-    let guard = state.recording.lock().unwrap();
-    let rec = guard.rec.as_ref().ok_or("no recording")?;
+    let guard = state.recordings.lock().unwrap();
+    let rec = &guard.get(rec)?.rec;
     Ok(AllStats {
         channels: rec
             .specs()
@@ -544,10 +661,10 @@ fn get_stats(app: AppHandle, t0: f64, t1: f64) -> Result<AllStats, String> {
     })
 }
 #[tauri::command(async)]
-fn get_uart(app: AppHandle, t0: f64, t1: f64) -> Vec<UartChunk> {
+fn get_uart(app: AppHandle, rec: u32, t0: f64, t1: f64) -> Vec<UartChunk> {
     let state = app.state::<App>();
-    let guard = state.recording.lock().unwrap();
-    let Some(rec) = guard.rec.as_ref() else {
+    let guard = state.recordings.lock().unwrap();
+    let Ok(Rec { rec, .. }) = guard.get(rec) else {
         return Vec::new();
     };
     let mut chunks: Vec<UartChunk> = rec
@@ -567,43 +684,41 @@ fn get_uart(app: AppHandle, t0: f64, t1: f64) -> Vec<UartChunk> {
     chunks
 }
 #[tauri::command(async)]
-fn get_edges(app: AppHandle, t0: f64, t1: f64) -> Vec<rec::Edge> {
+fn get_edges(app: AppHandle, rec: u32, t0: f64, t1: f64) -> Vec<rec::Edge> {
     let state = app.state::<App>();
-    let guard = state.recording.lock().unwrap();
-    guard.rec.as_ref().map_or(Vec::new(), |r| r.edges(t0, t1))
+    let guard = state.recordings.lock().unwrap();
+    guard.get(rec).map_or(Vec::new(), |r| r.rec.edges(t0, t1))
 }
 #[tauri::command(async)]
-fn save_recording(app: AppHandle, path: String) -> Result<(), String> {
+fn save_recording(app: AppHandle, rec: u32, path: String) -> Result<(), String> {
     let state = app.state::<App>();
-    let guard = state.recording.lock().unwrap();
-    let rec = guard.rec.as_ref().ok_or("no recording")?;
-    rec.save(path, &guard.meta).map_err(text)
+    let guard = state.recordings.lock().unwrap();
+    let r = guard.get(rec)?;
+    r.rec.save(path, &r.meta).map_err(text)
 }
+/// Open a saved recording in a tab of its own.
 #[tauri::command(async)]
 fn load_recording(app: AppHandle, path: String) -> Result<RecordingInfo, String> {
-    let (loaded, meta) = Recording::load(path).map_err(text)?;
+    let (rec, meta) = Recording::load(path).map_err(text)?;
     let state = app.state::<App>();
-    let _control = state.control.lock().unwrap();
-    stop_active(&app)?;
-    let mut r = state.recording.lock().unwrap();
-    *r = Rec {
-        rec: Some(loaded),
+    Ok(state.recordings.lock().unwrap().add(Rec {
+        rec,
         capture: None,
         device: None,
         meta,
-    };
-    rec_info(&r).ok_or_else(|| "no recording".into())
+    }))
 }
 #[tauri::command(async)]
 fn export_recording(
     app: AppHandle,
+    rec: u32,
     path: String,
     t0: Option<f64>,
     t1: Option<f64>,
 ) -> Result<(), String> {
     let state = app.state::<App>();
-    let guard = state.recording.lock().unwrap();
-    let rec = guard.rec.as_ref().ok_or("no recording")?;
+    let guard = state.recordings.lock().unwrap();
+    let rec = &guard.get(rec)?.rec;
     let range = match (t0, t1) {
         (Some(a), Some(b)) => Some((a, b)),
         (None, None) => None,
@@ -621,7 +736,7 @@ fn export_recording(
     }
 }
 
-/// Open a found device, list it and start its worker.
+/// Open the chosen device, show it and start its worker.
 fn open_device(app: &AppHandle, found: &Found) -> Result<(), Error> {
     let dev = benchwatt_session::open(found)?;
     let events = dev.events();
@@ -650,17 +765,11 @@ fn open_device(app: &AppHandle, found: &Found) -> Result<(), Error> {
     let app_state = app.state::<App>();
     let open = {
         let mut devices = app_state.devices.lock().unwrap();
-        if !app_state.running.load(Ordering::Acquire) {
+        // The choice may have changed while the device was being opened.
+        if !app_state.running.load(Ordering::Acquire) || devices.wanted.as_ref() != Some(found) {
             return Ok(());
         }
-        let kind = found.kind;
-        desc.id = (1..)
-            .map(|i| match i {
-                1 => kind.to_string(),
-                _ => format!("{kind}-{i}"),
-            })
-            .find(|id| !devices.iter().any(|o| &o.id == id))
-            .unwrap_or_default();
+        desc.id = key(found);
         let open = Arc::new(Open {
             found: found.clone(),
             id: desc.id.clone(),
@@ -669,7 +778,8 @@ fn open_device(app: &AppHandle, found: &Found) -> Result<(), Error> {
             uart_open: AtomicBool::new(false),
             gone: AtomicBool::new(false),
         });
-        devices.push(open.clone());
+        devices.open = Some(open.clone());
+        devices.error = None;
         open
     };
     emit_devices(app);
@@ -678,43 +788,53 @@ fn open_device(app: &AppHandle, found: &Found) -> Result<(), Error> {
     app_state.threads.lock().unwrap().push(worker);
     Ok(())
 }
-fn scanner(app: AppHandle) {
+/// Keeps the list of plugged-in devices current and the chosen one open.
+fn scanner(app: AppHandle, wake: Receiver<()>) {
     let state = app.state::<App>();
-    let mut errors: HashMap<(&str, String), String> = HashMap::new();
     while state.running.load(Ordering::Acquire) {
-        for found in benchwatt_session::find() {
-            if !state.running.load(Ordering::Acquire) {
-                break;
+        let found = benchwatt_session::find();
+        let (changed, close, open) = {
+            let mut devices = state.devices.lock().unwrap();
+            let changed = devices.found != found;
+            devices.found = found;
+            let close = devices
+                .open
+                .clone()
+                .filter(|o| devices.wanted.as_ref() != Some(&o.found));
+            let open = devices
+                .wanted
+                .clone()
+                .filter(|w| devices.open.is_none() && devices.found.contains(w));
+            (changed, close, open)
+        };
+        if changed {
+            emit_devices(&app);
+        }
+        if let Some(old) = close {
+            // Its worker takes it off the list; the port is free once nobody holds it.
+            old.gone.store(true, Ordering::SeqCst);
+            while Arc::strong_count(&old) > 1 && state.running.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(5));
             }
-            if state
-                .devices
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|o| o.found == found)
-            {
-                continue;
-            }
-            let key = (found.kind, found.port.clone());
-            match open_device(&app, &found) {
-                Ok(()) => {
-                    errors.remove(&key);
+            continue;
+        }
+        if let Some(found) = open
+            && let Err(e) = open_device(&app, &found)
+        {
+            let message = Some(e.to_string());
+            let new = {
+                let mut devices = state.devices.lock().unwrap();
+                let new = devices.error != message && devices.wanted.as_ref() == Some(&found);
+                if new {
+                    devices.error = message;
                 }
-                Err(e) => {
-                    let message = e.to_string();
-                    if errors.get(&key) != Some(&message) {
-                        eprintln!("open {} {}: {message}", found.kind, found.port);
-                        errors.insert(key, message);
-                    }
-                }
+                new
+            };
+            if new {
+                emit_devices(&app);
             }
         }
-        for _ in 0..20 {
-            if !state.running.load(Ordering::Acquire) {
-                break;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
+        let _ = wake.recv_timeout(Duration::from_secs(1));
     }
 }
 fn device_worker(app: AppHandle, open: Arc<Open>, events: Receiver<Event>) {
@@ -736,7 +856,7 @@ fn device_worker(app: AppHandle, open: Arc<Open>, events: Receiver<Event>) {
     let mut dirty = false;
     let mut last_monitor = Instant::now();
     let mut last_recording = Instant::now();
-    while state.running.load(Ordering::Acquire) {
+    while state.running.load(Ordering::Acquire) && !open.gone.load(Ordering::SeqCst) {
         let mut reread = None;
         match events.recv_timeout(Duration::from_millis(25)) {
             Ok(Event::Disconnected) | Err(RecvTimeoutError::Disconnected) => break,
@@ -778,20 +898,19 @@ fn device_worker(app: AppHandle, open: Arc<Open>, events: Receiver<Event>) {
             }
         }
         let info = {
-            let mut r = state.recording.lock().unwrap();
-            let r = &mut *r;
-            if r.device.as_deref() == Some(&open.id)
-                && let (Some(capture), Some(rec)) = (r.capture.as_ref(), r.rec.as_mut())
-            {
-                capture.pump(rec, Duration::ZERO);
-                if last_recording.elapsed() >= Duration::from_millis(250) {
-                    last_recording = Instant::now();
-                    rec_info(r)
-                } else {
-                    None
+            let mut recs = state.recordings.lock().unwrap();
+            match recs.live() {
+                Some((id, r)) if r.device.as_deref() == Some(&open.id) => {
+                    if let Some(capture) = r.capture.as_ref() {
+                        capture.pump(&mut r.rec, Duration::ZERO);
+                    }
+                    let due = last_recording.elapsed() >= Duration::from_millis(250);
+                    due.then(|| {
+                        last_recording = Instant::now();
+                        rec_info(id, r)
+                    })
                 }
-            } else {
-                None
+                _ => None,
             }
         };
         if let Some(info) = info {
@@ -811,45 +930,52 @@ fn device_worker(app: AppHandle, open: Arc<Open>, events: Receiver<Event>) {
 fn remove(app: &AppHandle, open: &Open) {
     let state = app.state::<App>();
     open.gone.store(true, Ordering::SeqCst);
-    let info = {
-        let mut r = state.recording.lock().unwrap();
-        let r = &mut *r;
-        if r.device.as_deref() == Some(&open.id) {
-            if let (Some(capture), Some(rec)) = (r.capture.take(), r.rec.as_mut()) {
-                capture.pump(rec, Duration::ZERO);
-            }
-            if let Some(rec) = r.rec.as_mut() {
-                rec.stop();
-            }
-            r.device = None;
-            rec_info(r)
-        } else {
-            None
-        }
+    let ended: Vec<RecordingInfo> = {
+        let mut recs = state.recordings.lock().unwrap();
+        recs.list
+            .iter_mut()
+            .filter(|(_, r)| r.device.as_deref() == Some(&open.id))
+            .map(|(&id, r)| {
+                if let Some(capture) = r.capture.take() {
+                    capture.pump(&mut r.rec, Duration::ZERO);
+                    r.rec.stop();
+                }
+                r.device = None;
+                rec_info(id, r)
+            })
+            .collect()
     };
-    if let Some(info) = info {
+    for info in ended {
         let _ = app.emit("recording", info);
     }
-    state
-        .devices
-        .lock()
-        .unwrap()
-        .retain(|o| !std::ptr::eq(o.as_ref(), open));
+    {
+        let mut devices = state.devices.lock().unwrap();
+        if devices
+            .open
+            .as_ref()
+            .is_some_and(|o| std::ptr::eq(o.as_ref(), open))
+        {
+            devices.open = None;
+        }
+    }
     emit_devices(app);
 }
 
 fn main() {
+    let (wake, woken) = mpsc::channel();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(App {
             control: Mutex::new(()),
-            recording: Mutex::new(Rec::default()),
-            devices: Mutex::new(Vec::new()),
+            recordings: Mutex::new(Recs::default()),
+            devices: Mutex::new(Devices::default()),
             threads: Mutex::new(Vec::new()),
             running: AtomicBool::new(true),
+            wake: Mutex::new(wake),
         })
         .invoke_handler(tauri::generate_handler![
             get_devices,
+            select_device,
             set_output,
             set_voltage,
             set_current_limit,
@@ -860,7 +986,8 @@ fn main() {
             uart_send,
             start_recording,
             stop_recording,
-            recording_info,
+            close_recording,
+            recordings,
             get_view,
             get_stats,
             get_edges,
@@ -869,9 +996,9 @@ fn main() {
             load_recording,
             export_recording
         ])
-        .setup(|app| {
+        .setup(move |app| {
             let handle = app.handle().clone();
-            let scan = thread::spawn(move || scanner(handle));
+            let scan = thread::spawn(move || scanner(handle, woken));
             app.state::<App>().threads.lock().unwrap().push(scan);
             Ok(())
         })
@@ -881,6 +1008,7 @@ fn main() {
             if let tauri::RunEvent::Exit = event {
                 let state = app.state::<App>();
                 state.running.store(false, Ordering::Release);
+                let _ = state.wake.lock().unwrap().send(());
                 loop {
                     let Some(thread) = state.threads.lock().unwrap().pop() else {
                         break;
@@ -891,7 +1019,7 @@ fn main() {
                     let _control = state.control.lock().unwrap();
                     let _ = stop_active(app);
                 }
-                state.devices.lock().unwrap().clear();
+                state.devices.lock().unwrap().open = None;
             }
         });
 }
