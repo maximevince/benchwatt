@@ -69,12 +69,14 @@ pub struct Info {
     pub chinfo: ChannelTable,
 }
 type Response = (i32, Vec<u8>);
+type Listener = Box<dyn FnMut(&Event) + Send>;
 struct Inner {
     closed: AtomicBool,
     writer: Mutex<Box<dyn Write + Send>>,
     next: Mutex<u32>,
     pending: Mutex<HashMap<u32, Sender<Response>>>,
     subscribers: Mutex<Vec<Sender<Event>>>,
+    listeners: Mutex<Vec<Listener>>,
     info: Mutex<Info>,
     recording: Mutex<Vec<u32>>,
 }
@@ -86,6 +88,9 @@ pub struct Arc {
     ping: Option<thread::JoinHandle<()>>,
 }
 fn broadcast(inner: &Inner, event: Event) {
+    for f in inner.listeners.lock().unwrap().iter_mut() {
+        f(&event);
+    }
     inner
         .subscribers
         .lock()
@@ -176,6 +181,7 @@ impl Arc {
             next: Mutex::new(0),
             pending: Mutex::new(HashMap::new()),
             subscribers: Mutex::new(Vec::new()),
+            listeners: Mutex::new(Vec::new()),
             info: Mutex::new(Info::default()),
             recording: Mutex::new(Vec::new()),
         });
@@ -449,6 +455,10 @@ impl Arc {
         let (tx, rx) = mpsc::channel();
         self.inner.subscribers.lock().unwrap().push(tx);
         rx
+    }
+    /// Call `f` on the reader thread for every event, before subscribers see it.
+    pub fn listen(&self, f: impl FnMut(&Event) + Send + 'static) {
+        self.inner.listeners.lock().unwrap().push(Box::new(f));
     }
 }
 fn send_ping(inner: &Inner, data: &mut Vec<u8>) -> Result<(), Error> {
