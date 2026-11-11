@@ -26,14 +26,17 @@ Qoitech, GW Instek, Nordic Semiconductor or Jetperch.
   (the Arc's cutoff or constant-current limiting, the GPP's OVP and OCP, the
   PPK2's mode, the Joulescope's sample rate and current range). Alerts such as
   over-current are shown as they happen.
-- **Several instruments at once**: the app shows every supported instrument
-  that is plugged in and lets you switch between them. Outputs are shown in the
+- **One instrument at a time**: the app lists every supported instrument that
+  is plugged in, in the top bar and under the Device menu, and opens the one
+  you pick. The others stay free for other programs. Outputs are shown in the
   colours of the front panel where there are any, so CH2 of a GPP-4323 is cyan
   on screen too.
 - **Recording**: any of the instrument's channels: current, voltage and power,
   digital inputs, and on the Arc also the ADC, VBUS and temperature channels
   and UART RX/TX. Recordings are kept in memory with a min/max pyramid, so
   zooming from an hour down to single samples stays fast.
+- **Tabs**: every recording gets a tab of its own, and so does every file you
+  open. Earlier runs stay there to compare with until you close them.
 - **Viewer**: one lane per channel, with a shared time axis. Wheel to zoom,
   drag to pan, shift-drag to select. A selection shows min/avg/max, charge and
   energy right next to it.
@@ -46,8 +49,6 @@ Qoitech, GW Instek, Nordic Semiconductor or Jetperch.
   sigrok session (`.sr`) for PulseView.
 - **Automation**: the `benchwatt` command line tool and the `benchwatt` Python
   package, both described below.
-
-A recording comes from one instrument at a time for now.
 
 Tested with an Arc (hardware 1.3, firmware 3.1.3), a GPP-4323 (firmware V1.16),
 a PPK2 and a JS220 (firmware 1.3.0). The other GPP models are driven from their manuals and have not
@@ -95,10 +96,11 @@ The interface in `app/dist` is built into the binary, so run `npm run build`
 again after changing anything under `app/src`. While working on the interface,
 `cd app && npm run tauri dev` is more convenient: it reloads as you edit.
 
-It finds the instruments on its own by their USB ids and picks them up again
-when you plug them back in. Only one program can hold an instrument's serial
-port, so close the app before using the command line tool on the same
-instrument. `npm run tauri build` produces a `.deb` and an AppImage under
+It finds the instruments on its own by their USB ids. With one plugged in it
+opens that one; with several you choose, and it remembers the choice. A chosen
+instrument is picked up again when you plug it back in. Only one program can
+hold an instrument, so choose Device → Disconnect (or close the app) before
+using the command line tool on the same one. `npm run tauri build` produces a `.deb` and an AppImage under
 `target/release/bundle/`.
 
 Without any hardware, `cd app && npm run dev` serves the interface at
