@@ -47,7 +47,7 @@ fn native_roundtrip() {
         rec.push_block(ms, &block(0x17, BlockBody::Bytes(vec![ms as u8])));
     }
     rec.push_uart_tx(b"sent\n");
-    let p = path("otii-rec");
+    let p = path("bwrec");
     rec.save(&p, &Meta::default()).unwrap();
     let (loaded, meta) = Recording::load(&p).unwrap();
     fs::remove_file(p).unwrap();

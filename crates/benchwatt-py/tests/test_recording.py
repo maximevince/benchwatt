@@ -29,7 +29,7 @@ def test_fixture_data_and_stats(tmp_path):
     with pytest.raises(ValueError):
         rec.data("mc", t0=2, t1=1)
 
-    native = tmp_path / "run.otii-rec"
+    native = tmp_path / "run.bwrec"
     csv = tmp_path / "run.csv"
     sr = tmp_path / "run.sr"
     rec.save(str(native))

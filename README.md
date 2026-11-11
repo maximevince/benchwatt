@@ -29,7 +29,7 @@ Qoitech.
   typed. Clicking a line jumps to that moment in the plot, and selecting a range
   in the plot highlights the matching lines.
 - **Expansion port**: GPO1–2, GPI1–2, the 5 V pin and the I/O voltage.
-- **Files**: save and open `.otii-rec` recordings, export to CSV or to a
+- **Files**: save and open `.bwrec` recordings, export to CSV or to a
   sigrok session (`.sr`) for PulseView.
 - **Automation**: the `benchwatt` command line tool and the `benchwatt` Python
   package, both described below.
@@ -81,9 +81,9 @@ Some examples:
 ```sh
 benchwatt power --volt 3.3V --ilim 100mA on
 benchwatt measure --ch mc,mv,mp --duration 10s
-benchwatt record --ch mc,mv,mp --gpi --uart 115200 --duration 30s -o boot.otii-rec
-benchwatt convert boot.otii-rec boot.sr
-benchwatt stats boot.otii-rec --from 2s --to 5s
+benchwatt record --ch mc,mv,mp --gpi --uart 115200 --duration 30s -o boot.bwrec
+benchwatt convert boot.bwrec boot.sr
+benchwatt stats boot.bwrec --from 2s --to 5s
 benchwatt power off
 ```
 
@@ -124,7 +124,7 @@ with benchwatt.Arc() as arc:
 
 print(rec.stats("mc"))            # mean, min, max, rms, ...
 t, i = rec.data("mc")             # NumPy arrays
-rec.save("run.otii-rec")
+rec.save("run.bwrec")
 ```
 
 Build it with maturin from `crates/benchwatt-py`. Recordings saved by the app, the
@@ -136,7 +136,7 @@ CLI or Python open in any of the three. Details and a pytest example are in
 | Path | What's in it |
 |------|--------------|
 | `crates/otii-arc` | Protocol and serial device driver |
-| `crates/benchwatt-rec` | Recording engine, `.otii-rec` format, CSV and sigrok export |
+| `crates/benchwatt-rec` | Recording engine, `.bwrec` format, CSV and sigrok export |
 | `crates/benchwatt-cli` | The `benchwatt` command line tool |
 | `crates/benchwatt-py` | Python bindings (PyO3) |
 | `app/` | Desktop app: Tauri 2 backend, Svelte 5 frontend |

@@ -28,12 +28,12 @@ with benchwatt.Arc() as arc:
     finally:
         arc.output = False
 
-rec.save("run.otii-rec")
+rec.save("run.bwrec")
 rec.export("run.csv")  # or run.sr
 print(rec.stats("mc"), rec.charge_mah(), rec.energy())
 ```
 
-A recording can also be loaded offline with `benchwatt.Recording.load("run.otii-rec")`. `data("mc")` returns native rate NumPy arrays: float64 timestamps and float32 values. `stats`, `data`, `edges`, and `uart` accept optional `t0` and `t1` bounds. `alerts()` returns and clears device alerts; alerts do not raise exceptions automatically.
+A recording can also be loaded offline with `benchwatt.Recording.load("run.bwrec")`. `data("mc")` returns native rate NumPy arrays: float64 timestamps and float32 values. `stats`, `data`, `edges`, and `uart` accept optional `t0` and `t1` bounds. `alerts()` returns and clears device alerts; alerts do not raise exceptions automatically.
 
 ## Pytest power regression
 
@@ -60,8 +60,8 @@ def test_100_ohm_current():
 For a device with a 500 mAh usable battery, capture separate sleep and active states. If it is active 5% of the time, estimate hours from the weighted current:
 
 ```python
-sleep = benchwatt.Recording.load("sleep.otii-rec")
-active = benchwatt.Recording.load("active.otii-rec")
+sleep = benchwatt.Recording.load("sleep.bwrec")
+active = benchwatt.Recording.load("active.bwrec")
 sleep_a = sleep.stats("mc")["mean"]
 active_a = active.stats("mc")["mean"]
 average_a = 0.95 * sleep_a + 0.05 * active_a
@@ -77,7 +77,7 @@ This estimate assumes the captured states and duty cycle represent real use, and
 import matplotlib.pyplot as plt
 import benchwatt
 
-rec = benchwatt.Recording.load("run.otii-rec")
+rec = benchwatt.Recording.load("run.bwrec")
 t, current = rec.data("mc", t0=1.0, t1=2.0)
 plt.plot(t, current * 1000)
 plt.xlabel("Time (s)")

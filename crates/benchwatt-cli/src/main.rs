@@ -343,10 +343,10 @@ fn stats_value(rec: &Recording, from: f64, to: f64) -> Value {
 fn write_format(rec: &Recording, path: &str, meta: &Meta) -> Result<()> {
     let p = Path::new(path);
     match p.extension().and_then(|s| s.to_str()) {
-        Some("otii-rec") => rec.save(p, meta).map_err(|e| Failure::io(e.to_string())),
+        Some("bwrec") => rec.save(p, meta).map_err(|e| Failure::io(e.to_string())),
         Some("csv") => export::export_csv(rec, p, None).map_err(|e| Failure::io(e.to_string())),
         Some("sr") => export::export_sr(rec, p).map_err(|e| Failure::io(e.to_string())),
-        _ => Err(Failure::usage("output must end in .otii-rec, .csv or .sr")),
+        _ => Err(Failure::usage("output must end in .bwrec, .csv or .sr")),
     }
 }
 #[derive(Debug)]
@@ -508,8 +508,8 @@ fn validate_live(command: &Command) -> Result<()> {
 }
 fn check_extension(path: &str) -> Result<()> {
     match Path::new(path).extension().and_then(|s| s.to_str()) {
-        Some("otii-rec" | "csv" | "sr") => Ok(()),
-        _ => Err(Failure::usage("output must end in .otii-rec, .csv or .sr")),
+        Some("bwrec" | "csv" | "sr") => Ok(()),
+        _ => Err(Failure::usage("output must end in .bwrec, .csv or .sr")),
     }
 }
 fn run(cli: Cli) -> Result<(Value, i32)> {
@@ -791,7 +791,7 @@ mod tests {
         }
         let base =
             std::env::temp_dir().join(format!("benchwatt-cli-fixture-{}", std::process::id()));
-        let native = base.with_extension("otii-rec");
+        let native = base.with_extension("bwrec");
         let csv = base.with_extension("csv");
         rec.save(&native, &Meta::default()).unwrap();
         let (converted, code) = run(Cli {
