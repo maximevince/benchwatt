@@ -163,8 +163,7 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 name = "benchwatt-app"
 version = "0.1.0"
 dependencies = [
- "benchwatt-rec",
- "otii-arc",
+ "benchwatt-session",
  "serde",
  "serde_json",
  "tauri",
@@ -176,7 +175,7 @@ dependencies = [
 name = "benchwatt-cli"
 version = "0.1.0"
 dependencies = [
- "benchwatt-rec",
+ "benchwatt-session",
  "clap",
  "ctrlc",
  "otii-arc",
@@ -195,7 +194,7 @@ dependencies = [
 name = "benchwatt-py"
 version = "0.1.0"
 dependencies = [
- "benchwatt-rec",
+ "benchwatt-session",
  "numpy",
  "otii-arc",
  "pyo3",
@@ -205,11 +204,20 @@ dependencies = [
 name = "benchwatt-rec"
 version = "0.1.0"
 dependencies = [
+ "benchwatt-device",
  "chrono",
- "otii-arc",
  "serde",
  "serde_json",
  "zip",
+]
+
+[[package]]
+name = "benchwatt-session"
+version = "0.1.0"
+dependencies = [
+ "benchwatt-device",
+ "benchwatt-rec",
+ "otii-arc",
 ]
 
 [[package]]

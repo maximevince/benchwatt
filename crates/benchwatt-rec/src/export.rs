@@ -97,8 +97,6 @@ pub fn export_csv_channel(
 pub fn export_sr(rec: &Recording, path: impl AsRef<Path>) -> io::Result<()> {
     export_sr_range(rec, path, None)
 }
-const GPI_PROBES: usize = 2;
-
 pub fn export_sr_range(
     rec: &Recording,
     path: impl AsRef<Path>,
@@ -111,22 +109,23 @@ pub fn export_sr_range(
         .into_iter()
         .filter(|s| s.kind == Kind::Analog)
         .collect();
-    let logic = rec
+    let digital = rec
         .specs()
-        .iter()
-        .any(|s| s.kind == Kind::Digital && s.id == 0x16);
-    // The Arc has two digital inputs; the other mask bits aren't real inputs.
-    let probes = if logic { GPI_PROBES } else { 0 };
+        .into_iter()
+        .find(|s| s.kind == Kind::Digital)
+        .filter(|s| s.bits > 0);
+    let probes = digital.as_ref().map_or(0, |s| s.bits.min(32) as usize);
+    let unitsize = probes.div_ceil(8).max(1);
     // Keys and analog numbering follow libsigrok's src/output/srzip.c, zip_create()
     // and zip_append_analog(): https://github.com/sigrokproject/libsigrok/blob/master/src/output/srzip.c
     let mut metadata = format!(
-        "[global]\nsigrok version=0.5.2\n\n[device 1]\nsamplerate={hz} Hz\ntotal analog={}\nunitsize=1\n",
+        "[global]\nsigrok version=0.5.2\n\n[device 1]\nsamplerate={hz} Hz\ntotal analog={}\nunitsize={unitsize}\n",
         analog.len()
     );
-    if logic {
-        metadata.push_str(&format!("capturefile=logic-1\ntotal probes={GPI_PROBES}\n"));
-        for i in 1..=GPI_PROBES {
-            metadata.push_str(&format!("probe{i}=gpi{i}\n"));
+    if let Some(s) = &digital {
+        metadata.push_str(&format!("capturefile=logic-1\ntotal probes={probes}\n"));
+        for i in 1..=probes {
+            metadata.push_str(&format!("probe{i}={}{i}\n", s.name));
         }
     }
     for (i, s) in analog.iter().enumerate() {
@@ -148,7 +147,8 @@ pub fn export_sr_range(
             zip.write_all(&rec.analog_at(s.id, t).unwrap_or(f32::NAN).to_le_bytes())?;
         }
     }
-    if logic {
+    if digital.is_some() {
+        let bits = u32::MAX >> (32 - probes);
         zip.start_file("logic-1-1", options)
             .map_err(io::Error::other)?;
         let edges = rec.edges(0.0, rec.duration());
@@ -160,7 +160,7 @@ pub fn export_sr_range(
                 mask = edges[pos].mask;
                 pos += 1;
             }
-            zip.write_all(&[(mask & ((1 << GPI_PROBES) - 1)) as u8])?;
+            zip.write_all(&(mask & bits).to_le_bytes()[..unitsize])?;
         }
     }
     zip.finish().map_err(io::Error::other)?;

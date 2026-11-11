@@ -1,14 +1,11 @@
 mod human;
 
-use benchwatt_rec::{
-    ChannelSpec, Kind, Recording, export,
-    file::{DeviceInfo, Meta},
+use benchwatt_session::{
+    Capture,
+    device::{Device, ErrorKind, Event, Gpio, Supply},
+    rec::{Kind, Recording, export, file::Meta},
 };
 use clap::{Parser, Subcommand};
-use otii_arc::{
-    Arc, Event,
-    prop::{self, PropertyValue, ValueKind},
-};
 use serde_json::{Value, json};
 use std::{
     io::{self, Write},
@@ -215,76 +212,41 @@ fn parse_bool(s: &str) -> Result<bool> {
         _ => Err(Failure::usage(format!("expected on/off: {s}"))),
     }
 }
-fn parse_prop(s: &str) -> Result<u32> {
-    if let Some(x) = s.strip_prefix("0x") {
-        u32::from_str_radix(x, 16).map_err(|_| Failure::usage("invalid property id"))
-    } else {
-        prop::property_by_name(s)
-            .map(|p| p.id)
-            .ok_or_else(|| Failure::usage(format!("unknown property {s}")))
-    }
-}
-fn device(cli: &Cli) -> Result<Arc> {
+fn device(cli: &Cli) -> Result<Box<dyn Device>> {
     let port = cli
         .port
         .clone()
-        .or_else(otii_arc::device::find_port)
+        .or_else(benchwatt_session::find)
         .ok_or_else(|| Failure::io("no Arc serial port found"))?;
-    Arc::open(&port).map_err(|e| Failure::io(e.to_string()))
+    dev(benchwatt_session::open(&port))
 }
-fn dev<T>(r: std::result::Result<T, otii_arc::device::Error>) -> Result<T> {
-    r.map_err(|e| Failure::io(e.to_string()))
+fn dev<T>(r: benchwatt_session::device::Result<T>) -> Result<T> {
+    r.map_err(|e| match e.kind {
+        ErrorKind::Invalid => Failure::usage(e.message),
+        _ => Failure::io(e.message),
+    })
 }
-fn specs(arc: &Arc, ch: &str, uart: bool, gpi: bool) -> Result<Vec<ChannelSpec>> {
-    let info = arc.info();
-    let mut ids: Vec<u16> = ch
-        .split(',')
+fn supply(d: &dyn Device) -> Result<&dyn Supply> {
+    d.supply()
+        .ok_or_else(|| Failure::usage("device has no supply output"))
+}
+fn gpio(d: &dyn Device) -> Result<&dyn Gpio> {
+    d.gpio()
+        .ok_or_else(|| Failure::usage("device has no digital outputs"))
+}
+/// A device value as `get` and `set` print it.
+fn text(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Number(n) if n.is_f64() => n.as_f64().unwrap().to_string(),
+        _ => v.to_string(),
+    }
+}
+fn names(ch: &str) -> Vec<&str> {
+    ch.split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(|s| {
-            prop::channel_by_name(s).ok_or_else(|| Failure::usage(format!("unknown channel {s}")))
-        })
-        .collect::<Result<_>>()?;
-    if uart && !ids.contains(&0x17) {
-        ids.push(0x17)
-    }
-    if gpi && !ids.contains(&0x16) {
-        ids.push(0x16)
-    }
-    if ids.is_empty() {
-        return Err(Failure::usage("no channels selected"));
-    }
-    ids.sort_unstable();
-    ids.dedup();
-    Ok(ids
-        .into_iter()
-        .map(|id| {
-            let ci = info.chinfo.get(id);
-            let kind = if id == 0x17 {
-                Kind::Bytes
-            } else if id == 0x16 {
-                Kind::Digital
-            } else {
-                Kind::Analog
-            };
-            ChannelSpec {
-                id,
-                name: prop::channel_name(id).into(),
-                unit: unit(id).into(),
-                rate_hz: ci.rate_hz,
-                kind,
-            }
-        })
-        .collect())
-}
-fn unit(ch: u16) -> &'static str {
-    match ch {
-        0 | 2 | 0xc..=0xe => "A",
-        1 | 3 | 5 | 0x10..=0x13 => "V",
-        6 | 7 => "W",
-        0x14 => "°C",
-        _ => "",
-    }
+        .collect()
 }
 fn stop_flag() -> Result<Shared<AtomicBool>> {
     let run = Shared::new(AtomicBool::new(true));
@@ -294,38 +256,20 @@ fn stop_flag() -> Result<Shared<AtomicBool>> {
     Ok(run)
 }
 fn capture(
-    arc: &Arc,
-    selected: &[ChannelSpec],
-    for_time: Duration,
+    d: &dyn Device,
+    ch: &str,
+    gpi: bool,
     uart: Option<u32>,
+    for_time: Duration,
 ) -> Result<Recording> {
     let run = stop_flag()?;
-    let rx = arc.events();
-    if let Some(baud) = uart {
-        dev(arc.uart_open(baud))?;
-    }
-    let ids: Vec<u32> = selected.iter().map(|s| u32::from(s.id)).collect();
-    if let Err(e) = arc.start_recording(&ids) {
-        if uart.is_some() {
-            let _ = arc.uart_close();
-        }
-        return Err(Failure::io(e.to_string()));
-    }
-    let mut rec = Recording::new(selected);
+    let (capture, mut rec) = dev(Capture::start(d, &names(ch), gpi, uart))?;
     let deadline = Instant::now() + for_time;
-    while run.load(Ordering::Relaxed) && Instant::now() < deadline {
-        match rx.recv_timeout(Duration::from_millis(50)) {
-            Ok(Event::Data { ms, block }) => rec.push_block(ms, &block),
-            Ok(Event::Disconnected) => break,
-            _ => {}
-        }
-    }
-    let stopped = arc.stop_recording();
-    if uart.is_some() {
-        let _ = arc.uart_close();
-    }
-    rec.stop();
-    dev(stopped)?;
+    while run.load(Ordering::Relaxed)
+        && Instant::now() < deadline
+        && capture.pump(&mut rec, Duration::from_millis(50))
+    {}
+    dev(capture.stop(d, &mut rec))?;
     Ok(rec)
 }
 fn stats_value(rec: &Recording, from: f64, to: f64) -> Value {
@@ -403,23 +347,6 @@ fn check_assertions(rec: &Recording, items: &[String]) -> Result<(Value, bool)> 
 }
 fn validate_live(command: &Command) -> Result<()> {
     match command {
-        Command::Get { name } => {
-            parse_prop(name)?;
-        }
-        Command::Set { name, value } => {
-            parse_prop(name)?;
-            if let Some(p) = prop::property(parse_prop(name)?) {
-                match p.kind {
-                    ValueKind::String => {}
-                    ValueKind::Bool => {
-                        parse_bool(value)?;
-                    }
-                    _ => {
-                        parse_number(value)?;
-                    }
-                }
-            }
-        }
         Command::Volt { v } => {
             value_unit(v, "V")?;
         }
@@ -454,12 +381,7 @@ fn validate_live(command: &Command) -> Result<()> {
             assertions,
         } => {
             duration(d)?;
-            let names: Vec<_> = ch.split(',').map(str::trim).collect();
-            for name in &names {
-                if prop::channel_by_name(name).is_none() {
-                    return Err(Failure::usage(format!("unknown channel {name}")));
-                }
-            }
+            let names = names(ch);
             for raw in assertions {
                 let a = parse_assertion(raw)?;
                 if a.target != "charge" && a.target != "energy" {
@@ -478,7 +400,6 @@ fn validate_live(command: &Command) -> Result<()> {
             }
         }
         Command::Record {
-            ch,
             duration: d,
             secs,
             output,
@@ -488,11 +409,6 @@ fn validate_live(command: &Command) -> Result<()> {
                 duration(d)?;
             } else if secs.is_none() {
                 return Err(Failure::usage("--duration required"));
-            }
-            for name in ch.split(',').map(str::trim) {
-                if prop::channel_by_name(name).is_none() {
-                    return Err(Failure::usage(format!("unknown channel {name}")));
-                }
             }
             check_extension(output)?;
         }
@@ -540,53 +456,41 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
         _ => {}
     }
     validate_live(&cli.command)?;
-    let arc = device(&cli)?;
+    let d = device(&cli)?;
+    let d = d.as_ref();
     let value = match cli.command {
-        Command::Info => {
-            let i = arc.info();
-            let mut props = serde_json::Map::new();
-            for (id, val) in i.properties {
-                props.insert(
-                    prop::property(id).map_or(format!("0x{id:x}"), |p| p.name.into()),
-                    json!(val.to_string()),
-                );
-            }
-            json!({"protocol":i.proto,"max_payload":i.max_len,"device_type":i.devtype,"features":i.featurebits,"properties":props})
-        }
+        Command::Info => Value::Object(d.info().details),
         Command::Get { name } => {
-            let id = parse_prop(&name)?;
-            let v = dev(arc.get_value(id))?;
-            json!({"name":name,"value":v.to_string()})
+            let v = dev(d.get(&name))?;
+            json!({"name":name,"value":text(&v)})
         }
         Command::Set { name, value } => {
-            let id = parse_prop(&name)?;
-            let p = prop::property(id).ok_or_else(|| Failure::usage("unknown property"))?;
-            let v = match p.kind {
-                ValueKind::String => PropertyValue::String(value),
-                ValueKind::Bool => PropertyValue::Bool(parse_bool(&value)?),
-                ValueKind::Int => PropertyValue::Int(parse_number(&value)? as i32),
-                ValueKind::Enum => PropertyValue::Enum(parse_number(&value)? as i32),
-                ValueKind::Scaled => PropertyValue::Number(parse_number(&value)?),
+            // The value's type follows what the device holds for that key now.
+            let v = match dev(d.get(&name))? {
+                Value::String(_) => Value::String(value),
+                Value::Bool(_) => Value::Bool(parse_bool(&value)?),
+                Value::Number(n) if n.is_f64() => json!(parse_number(&value)?),
+                _ => json!(parse_number(&value)? as i32),
             };
-            dev(arc.set(id, &v))?;
-            json!({"name":name,"value":v.to_string()})
+            dev(d.set(&name, v.clone()))?;
+            json!({"name":name,"value":text(&v)})
         }
         Command::On => {
-            dev(arc.output(true))?;
+            dev(supply(d)?.set_enabled(1, true))?;
             json!({"output":true})
         }
         Command::Off => {
-            dev(arc.output(false))?;
+            dev(supply(d)?.set_enabled(1, false))?;
             json!({"output":false})
         }
         Command::Volt { v } => {
             let n = value_unit(&v, "V")?;
-            dev(arc.set_voltage(n))?;
+            dev(supply(d)?.set_voltage(1, n))?;
             json!({"voltage_V":n})
         }
         Command::Ilim { a } => {
             let n = value_unit(&a, "A")?;
-            dev(arc.set_current_limit(n))?;
+            dev(supply(d)?.set_current_limit(1, n))?;
             json!({"current_limit_A":n})
         }
         Command::Power {
@@ -598,12 +502,12 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
             let mut applied = serde_json::Map::new();
             if let Some(v) = volt {
                 let n = value_unit(&v, "V")?;
-                dev(arc.set_voltage(n))?;
+                dev(supply(d)?.set_voltage(1, n))?;
                 applied.insert("voltage_V".into(), json!(n));
             }
             if let Some(a) = ilim {
                 let n = value_unit(&a, "A")?;
-                dev(arc.set_current_limit(n))?;
+                dev(supply(d)?.set_current_limit(1, n))?;
                 applied.insert("current_limit_A".into(), json!(n));
             }
             if let Some(m) = mode {
@@ -612,23 +516,22 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
                     "limit" => 1,
                     _ => return Err(Failure::usage("mode must be cutoff or limit")),
                 };
-                dev(arc.set(6, &PropertyValue::Enum(id)))?;
+                dev(d.set("mainsrccurrmode", json!(id)))?;
                 applied.insert("mode".into(), json!(m));
             }
             if let Some(s) = state {
                 let on = parse_bool(&s)?;
-                dev(arc.output(on))?;
+                dev(supply(d)?.set_enabled(1, on))?;
                 applied.insert("output".into(), json!(on));
             }
             Value::Object(applied)
         }
         Command::Measure {
             ch,
-            duration: d,
+            duration: t,
             assertions,
         } => {
-            let specs = specs(&arc, &ch, false, false)?;
-            let rec = capture(&arc, &specs, duration(&d)?, None)?;
+            let rec = capture(d, &ch, false, None, duration(&t)?)?;
             let (mut summary, mut code) = (stats_value(&rec, 0.0, rec.duration()), 0);
             let (reports, all) = check_assertions(&rec, &assertions)?;
             summary["assertions"] = reports;
@@ -639,80 +542,60 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
         }
         Command::Record {
             ch,
-            duration: d,
+            duration: t,
             secs,
             output,
             uart,
             gpi,
         } => {
-            let duration = if let Some(d) = d {
-                duration(&d)?
+            let duration = if let Some(t) = t {
+                duration(&t)?
             } else if let Some(s) = secs {
                 Duration::from_secs(s)
             } else {
                 return Err(Failure::usage("--duration required"));
             };
-            let specs = specs(&arc, &ch, uart.is_some(), gpi)?;
-            let rec = capture(&arc, &specs, duration, uart)?;
-            let info = arc.info();
-            let property = |id| info.properties.get(&id).map(ToString::to_string);
-            let meta = Meta {
-                device: DeviceInfo {
-                    name: property(1),
-                    fw: property(0x81),
-                    hw: property(0x80),
-                    uid: property(0x82),
-                    proto: Some(info.proto),
-                },
-                ..Meta::default()
-            };
-            write_format(&rec, &output, &meta)?;
+            let rec = capture(d, &ch, gpi, uart, duration)?;
+            write_format(&rec, &output, &benchwatt_session::meta(d))?;
             json!({"output":output,"duration_s":rec.duration(),"samples":rec.sample_counts(),"gaps":rec.gaps()})
         }
         Command::Monitor => {
             let run = stop_flag()?;
-            let rx = arc.events();
+            let rx = d.events();
+            let channels = d.channels();
             while run.load(Ordering::Relaxed) {
-                match rx.recv_timeout(Duration::from_millis(100)) {
-                    Ok(Event::Monitor { ch, value }) => {
-                        let v = json!({"channel":prop::channel_name(ch as u16),"value":value});
-                        if cli.json {
-                            println!("{v}")
-                        } else {
-                            print_human(&v)
-                        }
+                let v = match rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(Event::Reading { ch, value }) => {
+                        let name = channels.iter().find(|c| c.id == ch).map_or("", |c| &c.name);
+                        json!({"channel":name,"value":value})
                     }
-                    Ok(Event::Gpi(mask)) => {
-                        let v = json!({"gpi":mask});
-                        if cli.json {
-                            println!("{v}")
-                        } else {
-                            print_human(&v)
-                        }
-                    }
-                    _ => {}
+                    Ok(Event::Inputs(mask)) => json!({"gpi":mask}),
+                    _ => continue,
+                };
+                if cli.json {
+                    println!("{v}")
+                } else {
+                    print_human(&v)
                 }
             }
             return Ok((json!({"stopped":true}), 0));
         }
         Command::Uart { baud, send, secs } => {
-            let rx = arc.events();
-            dev(arc.uart_open(baud))?;
-            dev(arc.start_recording(&[0x17]))?;
+            let port = d
+                .uart()
+                .ok_or_else(|| Failure::usage("device has no UART"))?;
+            let (capture, mut rec) = dev(Capture::start(d, &[] as &[&str], false, Some(baud)))?;
             if let Some(s) = send {
-                dev(arc.uart_write(s.as_bytes()))?
+                dev(port.write(s.as_bytes()))?
             }
             let deadline = Instant::now() + Duration::from_secs(secs);
-            let mut bytes = Vec::new();
-            while Instant::now() < deadline {
-                if let Ok(Event::Data { block, .. }) = rx.recv_timeout(Duration::from_millis(100))
-                    && let otii_arc::msg::BlockBody::Bytes(v) = block.body
-                {
-                    bytes.extend(v)
-                }
-            }
-            dev(arc.stop_recording())?;
-            dev(arc.uart_close())?;
+            while Instant::now() < deadline && capture.pump(&mut rec, Duration::from_millis(100)) {}
+            dev(capture.stop(d, &mut rec))?;
+            let bytes: Vec<u8> = rec
+                .bytes(port.rx(), 0.0, rec.duration())
+                .into_iter()
+                .flat_map(|c| c.bytes)
+                .collect();
             if !cli.json {
                 io::stdout()
                     .write_all(&bytes)
@@ -721,7 +604,7 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
             json!({"rx_bytes":bytes})
         }
         Command::Gpo { n, state } => {
-            dev(arc.set_gpo(n, parse_bool(&state)?))?;
+            dev(gpio(d)?.set_output(n, parse_bool(&state)?))?;
             json!({"gpo":n,"state":state})
         }
         Command::Convert { .. } | Command::Stats { .. } => unreachable!(),
@@ -747,47 +630,15 @@ mod tests {
     }
     #[test]
     fn fixture_offline_convert_and_stats() {
-        use otii_arc::{
-            msg::{self, Message},
-            prop::ChannelTable,
-        };
-        let hex = |line: &str| -> Vec<u8> {
-            line.as_bytes()
-                .chunks_exact(2)
-                .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
-                .collect()
-        };
-        let mut table = ChannelTable::default();
-        let selected = [
-            ChannelSpec {
-                id: 0,
-                name: "mc".into(),
-                unit: "A".into(),
-                rate_hz: 4000,
-                kind: Kind::Analog,
-            },
-            ChannelSpec {
-                id: 1,
-                name: "mv".into(),
-                unit: "V".into(),
-                rate_hz: 1000,
-                kind: Kind::Analog,
-            },
-        ];
+        let (channels, blocks) =
+            otii_arc::adapter::replay(include_str!("../../../fixtures/session1.hex"));
+        let selected: Vec<_> = channels
+            .into_iter()
+            .filter(|c| c.name == "mc" || c.name == "mv")
+            .collect();
         let mut rec = Recording::new(&selected);
-        for line in include_str!("../../../fixtures/session1.hex")
-            .lines()
-            .filter(|s| !s.is_empty() && !s.starts_with('#'))
-        {
-            match msg::parse(&hex(line), &table).unwrap() {
-                Message::CmdResp { txn: 14, body, .. } => table = ChannelTable::decode(&body),
-                Message::Data { ms, blocks } => {
-                    for b in blocks {
-                        rec.push_block(ms, &b)
-                    }
-                }
-                _ => {}
-            }
+        for b in &blocks {
+            rec.push(b)
         }
         let base =
             std::env::temp_dir().join(format!("benchwatt-cli-fixture-{}", std::process::id()));

@@ -9,10 +9,10 @@ name = "benchwatt"
 crate-type = ["cdylib"]
 
 [features]
-testing = []
+testing = ["dep:otii-arc"]
 
 [dependencies]
-otii-arc = { path = "../otii-arc" }
-benchwatt-rec = { path = "../benchwatt-rec" }
+benchwatt-session = { path = "../benchwatt-session" }
+otii-arc = { path = "../otii-arc", optional = true }
 pyo3 = { version = "0.30.1", features = ["extension-module", "abi3-py310"] }
 numpy = "0.30.0"

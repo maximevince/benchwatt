@@ -1,5 +1,5 @@
 //! Streaming native recording archive. Packet boundaries preserve exact sample timing.
-use super::{ChannelSpec, Edge, Gap, Kind, Packet, Recording, UartChunk};
+use super::{ChannelDesc, Edge, Gap, Kind, Quantity, Recording, UartChunk};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::File,
@@ -20,7 +20,7 @@ pub struct DeviceInfo {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChannelMeta {
     #[serde(flatten)]
-    pub spec: ChannelSpec,
+    pub spec: ChannelDesc,
     pub sample_count: usize,
     pub first_sample_time: Option<f64>,
     packets: Vec<PacketMeta>,
@@ -78,14 +78,35 @@ struct UartIndex {
     offset: u64,
     len: usize,
 }
+// Version-1 files written before the index named its channel are all from an
+// Otii Arc, whose UART rx channel is 0x17.
 fn rx_channel() -> u16 {
     0x17
+}
+// Version-1 files written before channels carried quantity, group and bits are
+// all from an Otii Arc; derive what charge, energy and logic export need.
+fn upgrade(s: &mut ChannelDesc) {
+    if s.quantity == Quantity::Other && s.group.is_empty() {
+        s.quantity = match s.unit.as_str() {
+            "A" => Quantity::Current,
+            "V" => Quantity::Voltage,
+            "W" => Quantity::Power,
+            "°C" => Quantity::Temperature,
+            _ => Quantity::Other,
+        };
+        if matches!(s.name.as_str(), "mc" | "mv" | "mp") {
+            s.group = "main".into();
+        }
+    }
+    if s.kind == Kind::Digital && s.bits == 0 {
+        s.bits = 2;
+    }
 }
 impl Recording {
     pub fn save(&self, path: impl AsRef<Path>, supplied: &Meta) -> io::Result<()> {
         let mut meta = supplied.clone();
         meta.format_version = 1;
-        meta.gaps = self.gaps.clone();
+        meta.gaps = self.gaps();
         meta.duration_s = self.duration();
         meta.channels = self
             .specs()
@@ -164,17 +185,20 @@ impl Recording {
     }
     pub fn load(path: impl AsRef<Path>) -> io::Result<(Self, Meta)> {
         let mut zip = ZipArchive::new(File::open(path)?).map_err(zip_err)?;
-        let meta: Meta = serde_json::from_reader(zip.by_name("meta.json").map_err(zip_err)?)?;
+        let mut meta: Meta = serde_json::from_reader(zip.by_name("meta.json").map_err(zip_err)?)?;
         if meta.format_version != 1 {
             return Err(invalid("unsupported recording version"));
         }
+        meta.channels.iter_mut().for_each(|c| upgrade(&mut c.spec));
+        meta.gaps.sort_by(|a, b| a.from.total_cmp(&b.from));
         let specs: Vec<_> = meta.channels.iter().map(|c| c.spec.clone()).collect();
         let mut rec = Self::new(&specs);
-        rec.gaps = meta.gaps.clone();
-        if meta.duration_s > 0.0 {
-            rec.first = Some(0);
-            rec.last = Some((meta.duration_s * 1000.0).round().max(1.0) as u32 - 1);
+        for c in rec.channels.values_mut() {
+            if c.spec.kind != Kind::Bytes {
+                c.gaps = meta.gaps.clone();
+            }
         }
+        rec.end = meta.duration_s.max(0.0);
         for cm in &meta.channels {
             if cm.spec.kind != Kind::Analog {
                 continue;
@@ -207,11 +231,9 @@ impl Recording {
                 for _ in 0..p.len {
                     let mut b = [0; 4];
                     entry.read_exact(&mut b)?;
-                    values.push(f32::from_le_bytes(b) as f64);
+                    values.push(f32::from_le_bytes(b));
                 }
-                a.push(p.t, &values);
-                let last = a.packets.last_mut().unwrap();
-                *last = Packet { dt: p.dt, ..*last };
+                a.push(p.t, p.dt, &values);
             }
             if a.len != cm.sample_count {
                 return Err(invalid("packet count mismatch"));

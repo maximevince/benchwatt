@@ -1,24 +1,10 @@
 //! Recording engine. A 4 kHz f32 stream uses about 58 MB/h of raw storage.
-use otii_arc::msg::{Block, BlockBody};
+pub use benchwatt_device::{Block, ChannelDesc, Data, Kind, Quantity};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 const CHUNK: usize = 4096;
 pub mod export;
 pub mod file;
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum Kind {
-    Analog,
-    Digital,
-    Bytes,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ChannelSpec {
-    pub id: u16,
-    pub name: String,
-    pub unit: String,
-    pub rate_hz: u32,
-    pub kind: Kind,
-}
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Gap {
     pub from: f64,
@@ -153,8 +139,7 @@ impl Analog {
             max: a.max.max(b.max),
         }))
     }
-    fn push(&mut self, t: f64, v: &[f64]) {
-        let dt = 0.001 / v.len() as f64;
+    fn push(&mut self, t: f64, dt: f64, v: &[f32]) {
         self.packets.push(Packet {
             first: self.len,
             len: v.len(),
@@ -165,15 +150,15 @@ impl Analog {
             if self.chunks.last().is_none_or(|c| c.len() == CHUNK) {
                 self.chunks.push(Vec::with_capacity(CHUNK))
             }
-            self.chunks.last_mut().unwrap().push(x as f32);
+            self.chunks.last_mut().unwrap().push(x);
             self.len += 1;
             self.add(
                 0,
                 Bucket {
                     t: t + i as f64 * dt,
                     end: t + (i + 1) as f64 * dt,
-                    min: x as f32,
-                    max: x as f32,
+                    min: x,
+                    max: x,
                 },
             )
         }
@@ -198,8 +183,11 @@ impl Analog {
 const UART_JOIN_S: f64 = 0.002;
 const UART_CHUNK_MAX: usize = 256;
 struct Channel {
-    spec: ChannelSpec,
+    spec: ChannelDesc,
     a: Analog,
+    gaps: Vec<Gap>,
+    /// Where the previous non-empty block ended, for gap detection.
+    end: Option<f64>,
     edges: Vec<Edge>,
     digital_count: usize,
     uart: Vec<UartChunk>,
@@ -207,36 +195,48 @@ struct Channel {
     uart_end: f64,
     last: Option<u32>,
 }
+impl Channel {
+    fn new(spec: ChannelDesc) -> Self {
+        Self {
+            spec,
+            a: Analog::default(),
+            gaps: Vec::new(),
+            end: None,
+            edges: Vec::new(),
+            digital_count: 0,
+            uart: Vec::new(),
+            uart_end: f64::NEG_INFINITY,
+            last: None,
+        }
+    }
+    /// Records a gap when a block starts more than half a sample after the previous one ended.
+    fn follow(&mut self, t: f64, dt: f64, len: usize) {
+        if let Some(end) = self.end
+            && t - end > 0.5 * dt
+        {
+            self.gaps.push(Gap { from: end, to: t });
+            self.a.gap();
+        }
+        self.end = Some(t + len as f64 * dt);
+    }
+}
 pub struct Recording {
     channels: HashMap<u16, Channel>,
-    first: Option<u32>,
-    last: Option<u32>,
-    gaps: Vec<Gap>,
+    /// Latest end of any stored block.
+    end: f64,
+    /// Start time of the newest stored block.
+    newest: Option<f64>,
     active: bool,
 }
 impl Recording {
-    pub fn new(specs: &[ChannelSpec]) -> Self {
+    pub fn new(specs: &[ChannelDesc]) -> Self {
         Self {
             channels: specs
                 .iter()
-                .map(|s| {
-                    (
-                        s.id,
-                        Channel {
-                            spec: s.clone(),
-                            a: Analog::default(),
-                            edges: Vec::new(),
-                            digital_count: 0,
-                            uart: Vec::new(),
-                            uart_end: f64::NEG_INFINITY,
-                            last: None,
-                        },
-                    )
-                })
+                .map(|s| (s.id, Channel::new(s.clone())))
                 .collect(),
-            first: None,
-            last: None,
-            gaps: Vec::new(),
+            end: 0.0,
+            newest: None,
             active: true,
         }
     }
@@ -246,103 +246,87 @@ impl Recording {
     pub fn stop(&mut self) {
         self.active = false
     }
-    pub fn specs(&self) -> Vec<ChannelSpec> {
+    pub fn specs(&self) -> Vec<ChannelDesc> {
         let mut v: Vec<_> = self.channels.values().map(|c| c.spec.clone()).collect();
         v.sort_by_key(|s| s.id);
         v
     }
-    pub fn add_channel(&mut self, s: ChannelSpec) {
-        self.channels.entry(s.id).or_insert_with(|| Channel {
-            spec: s,
-            a: Analog::default(),
-            edges: Vec::new(),
-            digital_count: 0,
-            uart: Vec::new(),
-            uart_end: f64::NEG_INFINITY,
-            last: None,
-        });
+    pub fn add_channel(&mut self, s: ChannelDesc) {
+        self.channels.entry(s.id).or_insert_with(|| Channel::new(s));
     }
-    pub fn push_block(&mut self, ms: u32, b: &Block) {
+    /// Store a block; sample i is at `b.t + i * b.dt` on the recording's time axis.
+    pub fn push(&mut self, b: &Block) {
         if !self.active {
             return;
         }
-        let first = *self.first.get_or_insert(ms);
-        if let Some(last) = self.last {
-            let jump = ms.wrapping_sub(last);
-            if jump > 1 && jump < 0x8000_0000 {
-                self.gaps.push(Gap {
-                    from: last.wrapping_sub(first).wrapping_add(1) as f64 / 1000.0,
-                    to: ms.wrapping_sub(first) as f64 / 1000.0,
-                });
-                for c in self.channels.values_mut() {
-                    c.a.gap()
-                }
-            }
-        }
-        self.last = Some(ms);
         let Some(c) = self.channels.get_mut(&b.ch) else {
             return;
         };
-        let t = ms.wrapping_sub(first) as f64 / 1000.0;
-        match (&c.spec.kind, &b.body) {
-            (Kind::Analog, BlockBody::Samples(v)) if !v.is_empty() => c.a.push(t, v),
-            (Kind::Digital, BlockBody::Digital(v)) => {
+        let (t, dt) = (b.t, b.dt);
+        let end = match (&c.spec.kind, &b.data) {
+            (Kind::Analog, Data::Analog(v)) if !v.is_empty() => {
+                c.follow(t, dt, v.len());
+                c.a.push(t, dt, v);
+                t + v.len() as f64 * dt
+            }
+            (Kind::Digital, Data::Digital(v)) => {
+                if !v.is_empty() {
+                    c.follow(t, dt, v.len());
+                }
                 c.digital_count += v.len();
                 for (i, &mask) in v.iter().enumerate() {
                     if c.last != Some(mask) {
                         c.edges.push(Edge {
-                            t: t + i as f64 / v.len() as f64 / 1000.0,
+                            t: t + i as f64 * dt,
                             mask,
                         });
                         c.last = Some(mask)
                     }
                 }
+                t + v.len() as f64 * dt
             }
-            (Kind::Bytes, BlockBody::Bytes(v)) if !v.is_empty() => {
-                // The Arc splits a burst across 1 ms packets; join the pieces so a line stays whole.
-                let joins = t - c.uart_end <= UART_JOIN_S;
-                match c.uart.last_mut() {
-                    Some(prev)
-                        if joins
-                            && prev.bytes.last() != Some(&b'\n')
-                            && prev.bytes.len() < UART_CHUNK_MAX =>
-                    {
-                        prev.bytes.extend_from_slice(v)
+            (Kind::Bytes, Data::Bytes(v)) => {
+                if !v.is_empty() {
+                    // A burst may be split across consecutive blocks; join the pieces so a line stays whole.
+                    let joins = t - c.uart_end <= UART_JOIN_S;
+                    match c.uart.last_mut() {
+                        Some(prev)
+                            if joins
+                                && prev.bytes.last() != Some(&b'\n')
+                                && prev.bytes.len() < UART_CHUNK_MAX =>
+                        {
+                            prev.bytes.extend_from_slice(v)
+                        }
+                        _ => c.uart.push(UartChunk {
+                            t,
+                            bytes: v.clone(),
+                        }),
                     }
-                    _ => c.uart.push(UartChunk {
-                        t,
-                        bytes: v.clone(),
-                    }),
+                    c.uart_end = t;
                 }
-                c.uart_end = t;
+                t + dt
             }
-            _ => {}
-        }
+            _ => return,
+        };
+        self.end = self.end.max(end);
+        self.newest = Some(self.newest.map_or(t, |n| n.max(t)));
     }
-    /// Append transmitted UART bytes at the newest recorded packet time.
-    pub fn push_uart_tx(&mut self, bytes: &[u8]) {
-        if !self.active || bytes.is_empty() || self.first.is_none() {
+    /// Append transmitted bytes on `ch` at the start time of the newest block.
+    pub fn push_tx(&mut self, ch: &ChannelDesc, bytes: &[u8]) {
+        let Some(t) = self.newest.filter(|_| self.active && !bytes.is_empty()) else {
             return;
+        };
+        self.add_channel(ch.clone());
+        let c = self.channels.get_mut(&ch.id).unwrap();
+        if c.spec.kind == Kind::Bytes {
+            c.uart.push(UartChunk {
+                t,
+                bytes: bytes.to_vec(),
+            });
         }
-        self.add_channel(ChannelSpec {
-            id: 0x19,
-            name: "tx".into(),
-            unit: "".into(),
-            rate_hz: 0,
-            kind: Kind::Bytes,
-        });
-        let t = self.last.zip(self.first).map_or(0.0, |(last, first)| {
-            last.wrapping_sub(first) as f64 / 1000.0
-        });
-        self.channels.get_mut(&0x19).unwrap().uart.push(UartChunk {
-            t,
-            bytes: bytes.to_vec(),
-        });
     }
     pub fn duration(&self) -> f64 {
-        self.last
-            .zip(self.first)
-            .map_or(0.0, |(l, f)| l.wrapping_sub(f) as f64 / 1000.0 + 0.001)
+        self.end
     }
     pub fn sample_counts(&self) -> HashMap<String, usize> {
         self.channels
@@ -359,8 +343,22 @@ impl Recording {
             })
             .collect()
     }
-    pub fn gaps(&self) -> &[Gap] {
-        &self.gaps
+    /// Gaps of all channels, merged where they overlap.
+    pub fn gaps(&self) -> Vec<Gap> {
+        let mut all: Vec<Gap> = self
+            .channels
+            .values()
+            .flat_map(|c| c.gaps.iter().copied())
+            .collect();
+        all.sort_by(|a, b| a.from.total_cmp(&b.from));
+        let mut out: Vec<Gap> = Vec::with_capacity(all.len());
+        for g in all {
+            match out.last_mut() {
+                Some(last) if g.from <= last.to + 1e-9 => last.to = last.to.max(g.to),
+                _ => out.push(g),
+            }
+        }
+        out
     }
     /// Native analog samples, without display gap markers or resampling.
     pub fn analog_data(&self, ch: u16, t0: f64, t1: f64) -> Option<(Vec<f64>, Vec<f32>)> {
@@ -385,7 +383,8 @@ impl Recording {
         if !t0.is_finite() || !t1.is_finite() || t1 < t0 {
             return None;
         }
-        let a = &self.channels.get(&ch)?.a;
+        let c = self.channels.get(&ch)?;
+        let a = &c.a;
         let (lo, hi) = a.bounds(t0, t1);
         let budget = px.max(1).saturating_mul(2);
         if hi - lo <= budget {
@@ -456,8 +455,8 @@ impl Recording {
             min.push(x.min);
             max.push(x.max);
             let next = selected.get(i + 1).map_or(t1, |b| b.t);
-            let gap = self.gaps.partition_point(|g| g.from <= x.t);
-            if let Some(g) = self.gaps.get(gap)
+            let gap = c.gaps.partition_point(|g| g.from <= x.t);
+            if let Some(g) = c.gaps.get(gap)
                 && g.from < next
                 && g.from <= t1
             {
@@ -501,15 +500,27 @@ impl Recording {
             integral,
         })
     }
-    pub fn charge_mah(&self, t0: f64, t1: f64) -> Option<f64> {
-        Some(self.stats(0, t0, t1)?.integral / 3.6)
+    /// The channel measuring `q` in the group of the lowest-id grouped channel.
+    fn primary(&self, q: Quantity) -> Option<&Channel> {
+        let specs = self.specs();
+        let group = &specs.iter().find(|s| !s.group.is_empty())?.group;
+        let s = specs
+            .iter()
+            .find(|s| &s.group == group && s.quantity == q)?;
+        self.channels.get(&s.id)
     }
+    /// Charge of the primary group; per-group results come with multi-device recordings.
+    pub fn charge_mah(&self, t0: f64, t1: f64) -> Option<f64> {
+        let ch = self.primary(Quantity::Current)?.spec.id;
+        Some(self.stats(ch, t0, t1)?.integral / 3.6)
+    }
+    /// Energy of the primary group; per-group results come with multi-device recordings.
     pub fn energy(&self, t0: f64, t1: f64) -> Option<Energy> {
-        let joules = if self.channels.get(&6).is_some_and(|c| c.a.len > 0) {
-            self.stats(6, t0, t1)?.integral
+        let joules = if let Some(p) = self.primary(Quantity::Power).filter(|c| c.a.len > 0) {
+            self.stats(p.spec.id, t0, t1)?.integral
         } else {
-            let mc = &self.channels.get(&0)?.a;
-            let mv = &self.channels.get(&1)?.a;
+            let mc = &self.primary(Quantity::Current)?.a;
+            let mv = &self.primary(Quantity::Voltage)?.a;
             let (lo, hi) = mc.bounds(t0, t1);
             let mut j = 0.0;
             let mut found = false;
@@ -534,16 +545,15 @@ impl Recording {
         if !t0.is_finite() || !t1.is_finite() || t1 < t0 {
             return Vec::new();
         }
-        self.channels.get(&0x16).map_or(Vec::new(), |c| {
+        let digital = self.specs().into_iter().find(|s| s.kind == Kind::Digital);
+        digital.map_or(Vec::new(), |s| {
+            let c = &self.channels[&s.id];
             let s = c.edges.partition_point(|x| x.t < t0);
             let e = c.edges.partition_point(|x| x.t <= t1);
             c.edges[s..e].to_vec()
         })
     }
-    pub fn uart(&self, t0: f64, t1: f64) -> Vec<UartChunk> {
-        self.uart_channel(0x17, t0, t1)
-    }
-    pub fn uart_channel(&self, ch: u16, t0: f64, t1: f64) -> Vec<UartChunk> {
+    pub fn bytes(&self, ch: u16, t0: f64, t1: f64) -> Vec<UartChunk> {
         if !t0.is_finite() || !t1.is_finite() || t1 < t0 {
             return Vec::new();
         }

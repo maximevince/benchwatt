@@ -135,8 +135,10 @@ CLI or Python open in any of the three. Details and a pytest example are in
 
 | Path | What's in it |
 |------|--------------|
-| `crates/otii-arc` | Protocol and serial device driver |
+| `crates/benchwatt-device` | What a device looks like to the rest: channel descriptions, sample blocks, capability traits |
+| `crates/otii-arc` | The Arc's protocol and serial driver, and its adapter to those traits |
 | `crates/benchwatt-rec` | Recording engine, `.bwrec` format, CSV and sigrok export |
+| `crates/benchwatt-session` | Opens devices and runs captures into a recording |
 | `crates/benchwatt-cli` | The `benchwatt` command line tool |
 | `crates/benchwatt-py` | Python bindings (PyO3) |
 | `app/` | Desktop app: Tauri 2 backend, Svelte 5 frontend |
@@ -168,7 +170,7 @@ main output and the expansion port wired TX→RX and GPO1→GPI1:
 
 ```sh
 BENCHWATT_HW=1 pytest crates/benchwatt-py/tests/hw
-cargo run -p benchwatt-rec --example live
+cargo run -p benchwatt-session --example live
 ```
 
 ## License
