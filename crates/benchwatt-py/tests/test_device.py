@@ -113,3 +113,24 @@ def test_closed():
 def test_open_unknown_kind():
     with pytest.raises(ValueError, match="unknown device kind nope"):
         benchwatt.open("nope@/dev/null")
+
+
+def test_record_a_serial_port():
+    import os, pty, time
+
+    master, slave = pty.openpty()
+    port = benchwatt.Serial(os.ttyname(slave), 115200)
+    dev = fake_device()
+    with pytest.raises(ValueError, match="not both"):
+        dev.record(0.1, uart=115200, serial=port)
+    with pytest.raises(ValueError, match="no serial port"):
+        dev.serial_write(b"x")
+    dev.start_recording(["ch1.i"], serial=port)
+    os.write(master, b"hello\n")
+    time.sleep(0.2)
+    dev.serial_write(b"hi\n")
+    assert os.read(master, 16) == b"hi\n"
+    rec = dev.stop_recording()
+    assert rec.channels == ["ch1.i", "serial.rx", "serial.tx"]
+    assert b"".join(data for _, data in rec.bytes("serial.rx")) == b"hello\n"
+    assert [data for _, data in rec.bytes("serial.tx")] == [b"hi\n"]

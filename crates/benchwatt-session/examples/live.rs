@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     supply.set_enabled(1, true)?;
     std::thread::sleep(Duration::from_millis(300));
 
-    let (capture, mut rec) = Capture::start(dev, &["mc", "mv", "mp"], true, Some(115200))?;
+    let (mut capture, mut rec) = Capture::start(dev, &["mc", "mv", "mp"], true, Some(115200))?;
     let start = Instant::now();
     let mut next_tick = Duration::ZERO;
     let mut tick = 0;

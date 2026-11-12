@@ -5,6 +5,7 @@ use benchwatt_session::{
         SettingKind, Severity, Supply, Value,
     },
     rec::{self, Recording, View, export, file},
+    serial::{self, SerialLink},
 };
 use serde::Serialize;
 use std::{
@@ -20,17 +21,40 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager};
 
-/// Lock order: control → Open::dev → recordings → devices → Open::listed → threads.
+/// Lock order: control → Open::dev → recordings → serial → devices → Open::listed → threads.
 /// Only device calls may block while one is held.
 struct App {
     /// Serialises starting and stopping recordings and choosing the device.
     control: Mutex<()>,
     recordings: Mutex<Recs>,
     devices: Mutex<Devices>,
+    serial: Mutex<Linked>,
     threads: Mutex<Vec<JoinHandle<()>>>,
     running: AtomicBool,
     /// Wakes the scanner when the chosen device changes.
     wake: Mutex<Sender<()>>,
+}
+/// The serial port recorded next to the device, and how it was last set up.
+#[derive(Default)]
+struct Linked {
+    link: Option<SerialLink>,
+    port: Option<String>,
+    settings: serial::Settings,
+}
+impl Linked {
+    fn info(&self) -> SerialInfo {
+        SerialInfo {
+            port: self.port.clone(),
+            open: self.link.is_some(),
+            settings: self.settings.clone(),
+        }
+    }
+}
+#[derive(Clone, Serialize)]
+struct SerialInfo {
+    port: Option<String>,
+    open: bool,
+    settings: serial::Settings,
 }
 /// What is plugged in and the one device the app works with.
 #[derive(Default)]
@@ -453,10 +477,102 @@ fn set_gpo(app: AppHandle, device: String, n: u8, on: bool) -> Result<DeviceStat
     })
 }
 
+fn emit_serial(app: &AppHandle) {
+    let info = app.state::<App>().serial.lock().unwrap().info();
+    let _ = app.emit("serial", info);
+}
+#[tauri::command(async)]
+fn serial_ports() -> Vec<serial::PortInfo> {
+    serial::ports()
+}
+#[tauri::command(async)]
+fn serial_info(app: AppHandle) -> SerialInfo {
+    app.state::<App>().serial.lock().unwrap().info()
+}
+/// Open a serial port of the PC next to the device. A running recording
+/// starts taking its text from it.
+#[tauri::command(async)]
+fn serial_open(
+    app: AppHandle,
+    device: String,
+    port: String,
+    settings: serial::Settings,
+) -> Result<(), String> {
+    let state = app.state::<App>();
+    let _control = state.control.lock().unwrap();
+    let open = find_open(&app, &device)?;
+    if open.uart_open.load(Ordering::Acquire) {
+        return Err("close the device's UART first: a recording has one source of text".into());
+    }
+    // Let go of the previous port before opening, in case it is the same one.
+    state.serial.lock().unwrap().link = None;
+    let link = SerialLink::open(&port, &settings).map_err(text)?;
+    {
+        let mut recs = state.recordings.lock().unwrap();
+        if let Some((_, r)) = recs.live()
+            && let Some(capture) = r.capture.as_mut()
+        {
+            capture.attach(&link, &mut r.rec);
+            r.meta.serial = Some(settings.describe(&port));
+        }
+        *state.serial.lock().unwrap() = Linked {
+            link: Some(link),
+            port: Some(port),
+            settings,
+        };
+    }
+    emit_serial(&app);
+    Ok(())
+}
+#[tauri::command(async)]
+fn serial_close(app: AppHandle) {
+    app.state::<App>().serial.lock().unwrap().link = None;
+    emit_serial(&app);
+}
+#[tauri::command(async)]
+fn serial_send(app: AppHandle, text: String) -> Result<(), String> {
+    let state = app.state::<App>();
+    let mut recs = state.recordings.lock().unwrap();
+    let linked = state.serial.lock().unwrap();
+    let link = linked.link.as_ref().ok_or("no serial port is open")?;
+    let rec = recs.live().map(|(_, r)| &mut r.rec);
+    benchwatt_session::serial_write(link, rec, text.as_bytes()).map_err(|e| e.to_string())
+}
+/// Set the control lines of the open port; `pulse` drops DTR for a moment to reset a board.
+#[tauri::command(async)]
+fn serial_lines(
+    app: AppHandle,
+    dtr: Option<bool>,
+    rts: Option<bool>,
+    pulse: bool,
+) -> Result<(), String> {
+    {
+        let state = app.state::<App>();
+        let mut linked = state.serial.lock().unwrap();
+        let linked = &mut *linked;
+        let link = linked.link.as_ref().ok_or("no serial port is open")?;
+        if let Some(on) = dtr {
+            link.set_dtr(on).map_err(text)?;
+            linked.settings.dtr = on;
+        }
+        if let Some(on) = rts {
+            link.set_rts(on).map_err(text)?;
+            linked.settings.rts = on;
+        }
+        if pulse {
+            link.pulse_dtr(linked.settings.dtr).map_err(text)?;
+        }
+    }
+    emit_serial(&app);
+    Ok(())
+}
 #[tauri::command(async)]
 fn uart_open(app: AppHandle, device: String, baud: u32) -> Result<(), String> {
     if baud == 0 || baud > 3_000_000 {
         return Err("invalid baud rate".into());
+    }
+    if app.state::<App>().serial.lock().unwrap().link.is_some() {
+        return Err("close the serial port first: a recording has one source of text".into());
     }
     let open = find_open(&app, &device)?;
     let dev = open.dev.lock().unwrap();
@@ -561,9 +677,16 @@ fn start_recording(
     if names.is_empty() {
         return Err("select at least one channel".into());
     }
-    let (capture, rec) = Capture::start(dev.as_ref(), &names, false, None).map_err(text)?;
-    let meta = benchwatt_session::meta(dev.as_ref());
+    let (mut capture, mut rec) = Capture::start(dev.as_ref(), &names, false, None).map_err(text)?;
+    let mut meta = benchwatt_session::meta(dev.as_ref());
     let mut recs = state.recordings.lock().unwrap();
+    {
+        let linked = state.serial.lock().unwrap();
+        if let (Some(link), Some(port)) = (&linked.link, &linked.port) {
+            capture.attach(link, &mut rec);
+            meta.serial = Some(linked.settings.describe(port));
+        }
+    }
     if open.gone.load(Ordering::SeqCst) {
         return Err(format!("device {device} is not connected"));
     }
@@ -901,7 +1024,7 @@ fn device_worker(app: AppHandle, open: Arc<Open>, events: Receiver<Event>) {
             let mut recs = state.recordings.lock().unwrap();
             match recs.live() {
                 Some((id, r)) if r.device.as_deref() == Some(&open.id) => {
-                    if let Some(capture) = r.capture.as_ref() {
+                    if let Some(capture) = r.capture.as_mut() {
                         capture.pump(&mut r.rec, Duration::ZERO);
                     }
                     let due = last_recording.elapsed() >= Duration::from_millis(250);
@@ -915,6 +1038,29 @@ fn device_worker(app: AppHandle, open: Arc<Open>, events: Receiver<Event>) {
         };
         if let Some(info) = info {
             let _ = app.emit("recording", info);
+        }
+        // A linked serial port that was unplugged closes itself; the recording goes on.
+        let unplugged = {
+            let mut linked = state.serial.lock().unwrap();
+            match linked.link.as_ref().is_some_and(SerialLink::closed) {
+                true => {
+                    linked.link = None;
+                    linked.port.clone()
+                }
+                false => None,
+            }
+        };
+        if let Some(port) = unplugged {
+            emit_serial(&app);
+            let alert = Alert {
+                device: &open.id,
+                id: 0,
+                name: "serial".into(),
+                title: "Serial port closed".into(),
+                detail: format!("{port} went away."),
+                severity: Severity::Warning,
+            };
+            let _ = app.emit("alert", alert);
         }
         if dirty && last_monitor.elapsed() >= Duration::from_millis(100) {
             let _ = app.emit("monitor", monitor.clone());
@@ -936,7 +1082,7 @@ fn remove(app: &AppHandle, open: &Open) {
             .iter_mut()
             .filter(|(_, r)| r.device.as_deref() == Some(&open.id))
             .map(|(&id, r)| {
-                if let Some(capture) = r.capture.take() {
+                if let Some(mut capture) = r.capture.take() {
                     capture.pump(&mut r.rec, Duration::ZERO);
                     r.rec.stop();
                 }
@@ -947,6 +1093,10 @@ fn remove(app: &AppHandle, open: &Open) {
     };
     for info in ended {
         let _ = app.emit("recording", info);
+    }
+    // The serial port was linked to this device; it goes with it.
+    if state.serial.lock().unwrap().link.take().is_some() {
+        emit_serial(app);
     }
     {
         let mut devices = state.devices.lock().unwrap();
@@ -969,6 +1119,7 @@ fn main() {
             control: Mutex::new(()),
             recordings: Mutex::new(Recs::default()),
             devices: Mutex::new(Devices::default()),
+            serial: Mutex::new(Linked::default()),
             threads: Mutex::new(Vec::new()),
             running: AtomicBool::new(true),
             wake: Mutex::new(wake),
@@ -981,6 +1132,12 @@ fn main() {
             set_current_limit,
             set_setting,
             set_gpo,
+            serial_ports,
+            serial_info,
+            serial_open,
+            serial_close,
+            serial_send,
+            serial_lines,
             uart_open,
             uart_close,
             uart_send,
@@ -1019,6 +1176,7 @@ fn main() {
                     let _control = state.control.lock().unwrap();
                     let _ = stop_active(app);
                 }
+                state.serial.lock().unwrap().link = None;
                 state.devices.lock().unwrap().open = None;
             }
         });

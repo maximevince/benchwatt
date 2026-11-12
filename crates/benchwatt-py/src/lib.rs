@@ -2,6 +2,7 @@ use benchwatt_session::{
     Capture,
     device::{Device, Error, ErrorKind, Event, Kind, OutputState, Supply, Value},
     rec::{Recording as NativeRecording, export, file::Meta},
+    serial::{self, SerialLink},
 };
 use numpy::PyArray1;
 use pyo3::{
@@ -71,6 +72,16 @@ fn channel(rec: &NativeRecording, name: &str, kind: Kind) -> PyResult<u16> {
             let kind = format!("{kind:?}").to_lowercase();
             PyValueError::new_err(format!("unknown {kind} channel {name}"))
         })
+}
+
+/// The running recording, brought up to date so that what is written now is
+/// stamped with the present time.
+fn current(
+    recording: &mut Option<(Mutex<Capture>, NativeRecording)>,
+) -> Option<&mut NativeRecording> {
+    let (capture, rec) = recording.as_mut()?;
+    capture.get_mut().unwrap().pump(rec, Duration::ZERO);
+    Some(rec)
 }
 
 #[pyclass(name = "Recording", module = "benchwatt")]
@@ -210,11 +221,63 @@ impl PyRecording {
     }
 }
 
+/// A serial port of this PC to record next to an instrument.
+#[pyclass(name = "Serial", module = "benchwatt", frozen)]
+struct PySerial {
+    port: String,
+    settings: serial::Settings,
+}
+#[pymethods]
+impl PySerial {
+    #[new]
+    #[pyo3(signature = (port, baud=115200, *, data_bits=8, parity="none", stop_bits=1, flow="none", dtr=true, rts=true))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        port: &str,
+        baud: u32,
+        data_bits: u8,
+        parity: &str,
+        stop_bits: u8,
+        flow: &str,
+        dtr: bool,
+        rts: bool,
+    ) -> PyResult<Self> {
+        let parity = match parity {
+            "none" => 'N',
+            "even" => 'E',
+            "odd" => 'O',
+            _ => return Err(PyValueError::new_err("parity must be none, even or odd")),
+        };
+        let mut settings = serial::Settings {
+            baud,
+            dtr,
+            rts,
+            ..Default::default()
+        };
+        settings
+            .set_framing(&format!("{data_bits}{parity}{stop_bits}"))
+            .map_err(|_| PyValueError::new_err("data_bits must be 5 to 8 and stop_bits 1 or 2"))?;
+        settings.set("flow", flow).map_err(device_error)?;
+        if port.is_empty() || baud == 0 {
+            return Err(PyValueError::new_err("a port and a baud rate are needed"));
+        }
+        Ok(Self {
+            port: port.into(),
+            settings,
+        })
+    }
+    fn __repr__(&self) -> String {
+        format!("Serial({})", self.settings.describe(&self.port))
+    }
+}
+
 #[pyclass(name = "Device", module = "benchwatt")]
 struct PyDevice {
     dev: Option<Box<dyn Device>>,
     rx: Mutex<Receiver<Event>>,
     recording: Option<(Mutex<Capture>, NativeRecording)>,
+    /// The serial port recorded alongside, and how a saved file describes it.
+    serial: Option<(SerialLink, String)>,
     alerts: Vec<Value>,
     latest: HashMap<String, f32>,
 }
@@ -225,6 +288,7 @@ impl PyDevice {
             dev: Some(dev),
             rx: Mutex::new(rx),
             recording: None,
+            serial: None,
             alerts: Vec::new(),
             latest: HashMap::new(),
         }
@@ -300,7 +364,8 @@ impl PyDevice {
             .ok_or_else(|| PyValueError::new_err("recording is not active"))?;
         let dev = self.dev()?;
         let result = capture.into_inner().unwrap().stop(dev, &mut rec);
-        let meta = benchwatt_session::meta(dev);
+        let mut meta = benchwatt_session::meta(dev);
+        meta.serial = self.serial.take().map(|(_, described)| described);
         self.drain();
         result.map_err(device_error)?;
         Ok(PyRecording { rec, meta })
@@ -420,7 +485,7 @@ impl PyDevice {
             .dev
             .as_deref()
             .ok_or_else(|| DeviceError::new_err("device is closed"))?;
-        let rec = self.recording.as_mut().map(|(_, rec)| rec);
+        let rec = current(&mut self.recording);
         benchwatt_session::uart_write(dev, rec, data).map_err(device_error)
     }
     fn uart_close(&self) -> PyResult<()> {
@@ -428,17 +493,39 @@ impl PyDevice {
             .close()
             .map_err(device_error)
     }
+    /// Write to the serial port of the running recording; the bytes are logged in it too.
+    fn serial_write(&mut self, data: &[u8]) -> PyResult<()> {
+        let (link, _) = self
+            .serial
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("no serial port is being recorded"))?;
+        let rec = current(&mut self.recording);
+        benchwatt_session::serial_write(link, rec, data).map_err(device_error)
+    }
     /// Without channels: the analog channels that measure the outputs.
-    #[pyo3(signature = (channels=None, digital=false, uart=None))]
+    #[pyo3(signature = (channels=None, digital=false, uart=None, serial=None))]
     fn start_recording(
         &mut self,
         channels: Option<Vec<String>>,
         digital: bool,
         uart: Option<u32>,
+        serial: Option<PyRef<'_, PySerial>>,
     ) -> PyResult<()> {
         if self.recording.is_some() {
             return Err(PyValueError::new_err("recording already active"));
         }
+        if uart.is_some() && serial.is_some() {
+            return Err(PyValueError::new_err(
+                "a recording takes text from the UART or from a serial port, not both",
+            ));
+        }
+        let link = match &serial {
+            Some(s) => Some((
+                SerialLink::open(&s.port, &s.settings).map_err(device_error)?,
+                s.settings.describe(&s.port),
+            )),
+            None => None,
+        };
         let dev = self.dev()?;
         let channels = channels.unwrap_or_else(|| {
             dev.channels()
@@ -447,14 +534,19 @@ impl PyDevice {
                 .map(|c| c.name)
                 .collect()
         });
-        let (capture, rec) = Capture::start(dev, &channels, digital, uart).map_err(device_error)?;
+        let (mut capture, mut rec) =
+            Capture::start(dev, &channels, digital, uart).map_err(device_error)?;
+        if let Some((link, _)) = &link {
+            capture.attach(link, &mut rec);
+        }
+        self.serial = link;
         self.recording = Some((Mutex::new(capture), rec));
         Ok(())
     }
     fn stop_recording(&mut self) -> PyResult<PyRecording> {
         self.finish()
     }
-    #[pyo3(signature = (duration, channels=None, digital=false, uart=None))]
+    #[pyo3(signature = (duration, channels=None, digital=false, uart=None, serial=None))]
     fn record(
         &mut self,
         py: Python<'_>,
@@ -462,6 +554,7 @@ impl PyDevice {
         channels: Option<Vec<String>>,
         digital: bool,
         uart: Option<u32>,
+        serial: Option<PyRef<'_, PySerial>>,
     ) -> PyResult<PyRecording> {
         if !duration.is_finite() || duration < 0.0 || duration > u64::MAX as f64 {
             return Err(PyValueError::new_err(
@@ -472,7 +565,7 @@ impl PyDevice {
         let deadline = Instant::now()
             .checked_add(wait_for)
             .ok_or_else(|| PyValueError::new_err("duration is too large"))?;
-        self.start_recording(channels, digital, uart)?;
+        self.start_recording(channels, digital, uart, serial)?;
         while Instant::now() < deadline {
             let wait = deadline
                 .saturating_duration_since(Instant::now())
@@ -521,6 +614,7 @@ fn open(device: Option<&str>) -> PyResult<PyDevice> {
 fn _benchwatt(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDevice>()?;
     m.add_class::<PyRecording>()?;
+    m.add_class::<PySerial>()?;
     m.add_function(wrap_pyfunction!(devices, m)?)?;
     m.add_function(wrap_pyfunction!(open, m)?)?;
     m.add("DeviceError", m.py().get_type::<DeviceError>())?;

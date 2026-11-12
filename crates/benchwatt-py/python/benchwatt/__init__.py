@@ -1,7 +1,7 @@
 """Python bindings for Benchwatt: bench power instruments and their recordings."""
-from ._benchwatt import Device, Recording, devices, open, DeviceError, TimeoutError, AlertError
+from ._benchwatt import Device, Recording, Serial, devices, open, DeviceError, TimeoutError, AlertError
 
-__all__ = ["Arc", "Device", "Recording", "devices", "open", "DeviceError", "TimeoutError", "AlertError"]
+__all__ = ["Arc", "Device", "Recording", "Serial", "devices", "open", "DeviceError", "TimeoutError", "AlertError"]
 
 
 def Arc(port=None):

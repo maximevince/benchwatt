@@ -191,13 +191,15 @@ fn readings(outputs: &[Output], vs: &[f64], is: &[f64]) -> Vec<(u16, f32)> {
     values
 }
 
+/// USB vendor and product id of the supply's serial port.
+pub const USB_ID: (u16, u16) = (0x2184, 0x0057);
 pub fn find() -> Vec<String> {
     serialport::available_ports()
         .unwrap_or_default()
         .into_iter()
         .filter(|p| {
             matches!(&p.port_type, serialport::SerialPortType::UsbPort(u)
-                if u.vid == 0x2184 && u.pid == 0x0057)
+                if (u.vid, u.pid) == USB_ID)
         })
         .map(|p| p.port_name)
         .collect()

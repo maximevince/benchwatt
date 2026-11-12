@@ -501,12 +501,14 @@ pub fn unix_micros() -> u64 {
         .unwrap_or_default()
         .as_micros() as u64
 }
+/// USB vendor and product id of the Arc's serial port.
+pub const USB_ID: (u16, u16) = (0x0fce, 0xd1e6);
 pub fn find_port() -> Option<String> {
     serialport::available_ports()
         .ok()?
         .into_iter()
         .find(|p| match &p.port_type {
-            serialport::SerialPortType::UsbPort(info) => info.vid == 0x0fce && info.pid == 0xd1e6,
+            serialport::SerialPortType::UsbPort(info) => (info.vid, info.pid) == USB_ID,
             _ => false,
         })
         .map(|p| p.port_name)

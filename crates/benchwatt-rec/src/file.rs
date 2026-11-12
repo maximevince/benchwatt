@@ -42,6 +42,9 @@ pub struct Meta {
     pub gaps: Vec<Gap>,
     pub notes: Option<String>,
     pub duration_s: f64,
+    /// The serial port recorded alongside, e.g. `/dev/ttyUSB1 115200 8N1`.
+    #[serde(default)]
+    pub serial: Option<String>,
 }
 impl Default for Meta {
     fn default() -> Self {
@@ -54,6 +57,7 @@ impl Default for Meta {
             gaps: vec![],
             notes: None,
             duration_s: 0.0,
+            serial: None,
         }
     }
 }

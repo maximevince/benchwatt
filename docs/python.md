@@ -71,7 +71,16 @@ print(rec.stats("ch2.i"))
 
 ## Recording
 
-Device methods use volts and amps; recordings use seconds and SI sample values. `record(duration, channels=None, digital=False, uart=None)` records the named channels. Without `channels` it records the analog channels that measure the outputs (those with a group): `mc`, `mv`, `mp` on the Arc, `i` and `v` on the PPK2, every `chN.*` on a GPP. `digital=True` adds the digital inputs, and a baud rate in `uart` opens the UART for the recording and adds what it receives. `record` blocks but releases Python's GIL while waiting for device data. Ctrl-C stops capture and returns the samples received so far. `start_recording(...)` and `stop_recording()` do the same around your own code.
+Device methods use volts and amps; recordings use seconds and SI sample values. `record(duration, channels=None, digital=False, uart=None, serial=None)` records the named channels. Without `channels` it records the analog channels that measure the outputs (those with a group): `mc`, `mv`, `mp` on the Arc, `i` and `v` on the PPK2, every `chN.*` on a GPP. `digital=True` adds the digital inputs, and a baud rate in `uart` opens the UART for the recording and adds what it receives. `record` blocks but releases Python's GIL while waiting for device data. Ctrl-C stops capture and returns the samples received so far. `start_recording(...)` and `stop_recording()` do the same around your own code.
+
+To record a serial port of the PC next to the instrument, pass `serial=benchwatt.Serial(port, baud=115200)`. What arrives is the bytes channel `serial.rx`, and `serial_write(data)` sends to the port during the recording and logs the bytes as `serial.tx`. `Serial` also takes `data_bits`, `parity` (`"none"`, `"even"`, `"odd"`), `stop_bits`, `flow` (`"none"`, `"rtscts"`, `"xonxoff"`), `dtr` and `rts`. `uart` and `serial` cannot be combined. The PC stamps these bytes when it reads them, so they sit within some milliseconds of the samples, not exactly on them.
+
+```python
+with benchwatt.open("gpp") as gpp:
+    rec = gpp.record(30.0, channels=["ch1.i"], serial=benchwatt.Serial("/dev/ttyUSB1", 115200))
+for t, data in rec.bytes("serial.rx"):
+    print(f"{t:8.3f} {data!r}")
+```
 
 ```python
 import benchwatt

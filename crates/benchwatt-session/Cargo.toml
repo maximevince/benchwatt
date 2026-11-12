@@ -16,3 +16,5 @@ benchwatt-rec = { path = "../benchwatt-rec" }
 otii-arc = { path = "../otii-arc" }
 benchwatt-ppk2 = { path = "../benchwatt-ppk2" }
 benchwatt-gpp = { path = "../benchwatt-gpp" }
+serde = { version = "1", features = ["derive"] }
+serialport = "4.6"

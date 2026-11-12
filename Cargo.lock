@@ -249,6 +249,8 @@ dependencies = [
  "benchwatt-ppk2",
  "benchwatt-rec",
  "otii-arc",
+ "serde",
+ "serialport",
 ]
 
 [[package]]

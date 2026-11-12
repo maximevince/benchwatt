@@ -21,6 +21,7 @@ benchwatt power off
 benchwatt measure --ch mc,mv,mp --duration 10s --assert 'mc.mean<50uA' --assert 'mc.max<=200mA'
 benchwatt record --ch mc,mv,mp --duration 10s -o run.bwrec
 benchwatt record --ch mc,mv --duration 10s --gpi --uart 115200 -o run.sr
+benchwatt --device gpp record --ch ch1.i --serial /dev/ttyUSB1:115200 --duration 10s -o run.bwrec
 benchwatt convert run.bwrec run.csv
 benchwatt convert run.bwrec run.sr
 benchwatt stats run.bwrec --from 1s --to 3s
@@ -39,9 +40,15 @@ For a CI power regression check, for example:
       > power-check.json
 ```
 
+## Recording a serial port
+
+`record --uart BAUD` records the instrument's own UART, which only the Arc has. `record --serial PORT[:BAUD[:FRAMING]]` records a serial port of the PC next to any instrument, as the channel `serial.rx`. The baud rate defaults to 115200 and the framing to `8N1`; `/dev/ttyUSB1:9600:7E1` means 9600 baud, seven data bits, even parity and one stop bit. Other settings go in `--serial-set`, a comma separated list of `flow=none|rtscts|xonxoff`, `dtr=on|off` and `rts=on|off`. The two options cannot be combined: a recording takes its text from one place.
+
+The port is opened before the output is switched on, so the first bytes of a boot are not lost. The PC stamps the bytes when it reads them, relative to when the instrument's samples arrive. Expect them within some milliseconds of the samples, more with an adapter that holds bytes back (FTDI ones do for up to 16 ms). Linux raises DTR and RTS the moment a port is opened, so `dtr=off` lowers the line right after opening; a board that resets on DTR may still see that short pulse. The port of a supported instrument is refused.
+
 ## Recording formats
 
-`.bwrec` is a deflated ZIP archive with `meta.json` (version 1, timestamp, device and channel details, timing and gaps), raw little endian f32 analog samples in `ch/<name>.f32`, `edges.json`, and `uart.bin` with `uart.json` byte offsets. The loader rebuilds the display pyramid. Raw sample timing is stored per packet so gaps survive a save/load cycle.
+`.bwrec` is a deflated ZIP archive with `meta.json` (version 1, timestamp, device and channel details, timing and gaps), raw little endian f32 analog samples in `ch/<name>.f32`, `edges.json`, and `uart.bin` with `uart.json` byte offsets. A recorded serial port is named in the `serial` field of `meta.json`. The loader rebuilds the display pyramid. Raw sample timing is stored per packet so gaps survive a save/load cycle.
 
 `.csv` exports a single wide file at the highest analog sample rate. Lower rate analog channels hold their last sample for each packet; missing data produces empty cells. The library also provides `export_csv_channel` for native rate `time_s,value` output and accepts an optional time range for either CSV exporter.
 

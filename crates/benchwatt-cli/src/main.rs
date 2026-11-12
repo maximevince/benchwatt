@@ -4,6 +4,7 @@ use benchwatt_session::{
     Capture,
     device::{Device, ErrorKind, Event, Gpio, Supply},
     rec::{Kind, Recording, export, file::Meta},
+    serial,
 };
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
@@ -46,6 +47,37 @@ struct Powered {
     /// How long to wait after switching on before measuring.
     #[arg(long, requires = "on")]
     settle: Option<String>,
+}
+/// A serial port of this PC to record next to the instrument.
+#[derive(clap::Args)]
+struct Linked {
+    /// Record what arrives on a serial port as `serial.rx`: PORT[:BAUD[:FRAMING]],
+    /// e.g. /dev/ttyUSB1:115200:8N1.
+    #[arg(long, value_name = "PORT", conflicts_with = "uart")]
+    serial: Option<String>,
+    /// More settings of that port: flow=none|rtscts|xonxoff, dtr=on|off, rts=on|off.
+    #[arg(
+        long,
+        requires = "serial",
+        value_delimiter = ',',
+        value_name = "KEY=VALUE"
+    )]
+    serial_set: Vec<String>,
+}
+impl Linked {
+    fn port(&self) -> Result<Option<(String, serial::Settings)>> {
+        let Some(spec) = &self.serial else {
+            return Ok(None);
+        };
+        let (port, mut settings) = dev(serial::Settings::parse(spec))?;
+        for item in &self.serial_set {
+            let (key, value) = item
+                .split_once('=')
+                .ok_or_else(|| Failure::usage("--serial-set takes key=value"))?;
+            dev(settings.set(key, value))?;
+        }
+        Ok(Some((port, settings)))
+    }
 }
 impl Powered {
     fn used(&self) -> bool {
@@ -112,6 +144,8 @@ enum Command {
         uart: Option<u32>,
         #[arg(long)]
         gpi: bool,
+        #[command(flatten)]
+        linked: Linked,
         #[command(flatten)]
         power: Powered,
     },
@@ -312,10 +346,16 @@ fn capture(
     ch: &str,
     gpi: bool,
     uart: Option<u32>,
+    linked: Option<&(String, serial::Settings)>,
     for_time: Duration,
     power: &Powered,
 ) -> Result<Recording> {
     let run = stop_flag()?;
+    // Opened before the output is switched, so a port that cannot be opened powers nothing.
+    let link = match linked {
+        Some((port, settings)) => Some(dev(serial::SerialLink::open(port, settings))?),
+        None => None,
+    };
     let mut switched = None;
     if power.used() {
         let supply = supply(d)?;
@@ -339,7 +379,10 @@ fn capture(
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
-        let (capture, mut rec) = dev(Capture::start(d, &names(ch), gpi, uart))?;
+        let (mut capture, mut rec) = dev(Capture::start(d, &names(ch), gpi, uart))?;
+        if let Some(link) = &link {
+            capture.attach(link, &mut rec);
+        }
         let deadline = Instant::now() + for_time;
         while run.load(Ordering::Relaxed)
             && Instant::now() < deadline
@@ -613,7 +656,7 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
             assertions,
             power,
         } => {
-            let rec = capture(d, &ch, false, None, duration(&t)?, &power)?;
+            let rec = capture(d, &ch, false, None, None, duration(&t)?, &power)?;
             let (mut summary, mut code) = (stats_value(&rec, 0.0, rec.duration()), 0);
             let (reports, all) = check_assertions(&rec, &assertions)?;
             summary["assertions"] = reports;
@@ -629,6 +672,7 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
             output,
             uart,
             gpi,
+            linked,
             power,
         } => {
             let duration = if let Some(t) = t {
@@ -638,8 +682,11 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
             } else {
                 return Err(Failure::usage("--duration required"));
             };
-            let rec = capture(d, &ch, gpi, uart, duration, &power)?;
-            write_format(&rec, &output, &benchwatt_session::meta(d))?;
+            let linked = linked.port()?;
+            let rec = capture(d, &ch, gpi, uart, linked.as_ref(), duration, &power)?;
+            let mut meta = benchwatt_session::meta(d);
+            meta.serial = linked.map(|(port, settings)| settings.describe(&port));
+            write_format(&rec, &output, &meta)?;
             json!({"output":output,"duration_s":rec.duration(),"samples":rec.sample_counts(),"gaps":rec.gaps()})
         }
         Command::Monitor => {
@@ -667,7 +714,7 @@ fn run(cli: Cli) -> Result<(Value, i32)> {
             let port = d
                 .uart()
                 .ok_or_else(|| Failure::usage("device has no UART"))?;
-            let (capture, mut rec) = dev(Capture::start(d, &[] as &[&str], false, Some(baud)))?;
+            let (mut capture, mut rec) = dev(Capture::start(d, &[] as &[&str], false, Some(baud)))?;
             if let Some(s) = send {
                 dev(port.write(s.as_bytes()))?
             }
