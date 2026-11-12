@@ -819,7 +819,7 @@ button:disabled {
 .uart-console-toolbar label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 .uart-console-toolbar input[type="number"] { width: 78px; }
 .uart-console-toolbar input, .uart-send select { background: var(--background); color: var(--foreground); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font: 11px 'Geist Mono'; }
-.uart-console-toolbar button:not([data-slot="button"]) { border: 0; background: transparent; color: var(--muted-foreground); padding: 3px 5px; font-size: 11px; cursor: pointer; }
+.uart-console-toolbar button:not([data-slot]) { border: 0; background: transparent; color: var(--muted-foreground); padding: 3px 5px; font-size: 11px; cursor: pointer; }
 .uart-console-toolbar button.active { color: var(--foreground); background: var(--accent); border-radius: 4px; }
 .uart-filter { min-width: 110px; flex: 1; }.uart-count { color: var(--muted-foreground); white-space: nowrap; }
 .uart-viewport { flex: 1; min-height: 65px; overflow: auto; position: relative; }.uart-virtual-space { position: relative; }
@@ -887,3 +887,24 @@ button:disabled {
 .supply-heading { justify-content:flex-start;gap:10px; }
 .supply.marked { border-left:4px solid var(--output);padding-left:16px; }
 .channel-name { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+
+/* Serial console: the source of text and the port's settings. */
+.uart-console-toolbar .serial-port { max-width: 230px; background: var(--background); color: var(--foreground); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font: 11px 'Geist Mono'; }
+.uart-console-toolbar .serial-path { width: 170px; }
+.serial-settings { position: relative; }
+.uart-console-toolbar button.serial-summary { border: 1px solid var(--border); border-radius: 4px; font-family: 'Geist Mono'; white-space: nowrap; }
+.serial-panel { position: fixed; z-index: 50; width: 280px; box-sizing: border-box; display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--popover); box-shadow: 0 8px 24px rgb(0 0 0 / .25); font-size: 12px; }
+.uart-console-toolbar .serial-panel label { display: flex; align-items: center; gap: 10px; color: var(--muted-foreground); }
+.serial-panel label select { margin-left: auto; width: 130px; background: var(--background); color: var(--foreground); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font: 11px 'Geist Mono'; }
+.serial-panel hr { width: 100%; margin: 2px 0; border: 0; border-top: 1px solid var(--border); }
+.serial-panel h3 { margin: 0; font: 500 10px 'Geist Mono'; letter-spacing: .08em; text-transform: uppercase; color: var(--muted-foreground); }
+.serial-panel p, .serial-panel small { margin: 0; color: var(--muted-foreground); font-size: 11px; line-height: 1.4; }
+.serial-line { display: flex; align-items: center; gap: 10px; }
+.serial-line > span { width: 34px; }
+.serial-line.off > span { color: var(--muted-foreground); }
+.serial-empty { max-width: 460px; margin: 22px auto; text-align: center; font-size: 12px; }
+.serial-empty strong { font-weight: 500; }
+.serial-empty p { margin: 6px 0 0; color: var(--muted-foreground); line-height: 1.5; }
+.device-plus { color: var(--muted-foreground); }
+.device-serial { color: var(--uart); font-family: "Geist Mono", monospace; }
+.channel-port { margin-left: auto; color: var(--uart); font: 11px "Geist Mono", monospace; }

@@ -13,7 +13,7 @@
   <div class="topbar-right">
     <Menubar class="device-picker"><MenubarMenu><MenubarTrigger aria-label="Device">
       <i class="device-dot" class:connected={!!app.selected?.state} class:waiting={app.connecting} class:failed={!!app.deviceError}></i>
-      {#if app.selected}<span>{app.selected.desc.model}</span><span class="device-detail">{app.selected.desc.serial}</span>
+      {#if app.selected}<span>{app.selected.desc.model}</span><span class="device-detail">{app.selected.desc.serial}</span>{#if app.serial.open}<span class="device-plus">+</span><span class="device-serial">{app.serial.port?.split('/').pop()}</span>{/if}
       {:else if wanted}<span>{wanted.name}</span><span class="device-detail">{app.deviceError ? 'cannot open' : 'connecting…'}</span>
       {:else if app.wanted}<span class="device-detail">Unplugged</span>
       {:else}<span>{app.found.length ? 'Choose a device' : 'No device'}</span>{/if}

@@ -1,3 +1,5 @@
+import type { SerialInfo } from './backend';
+import { defaultSerialSettings } from './serial';
 import type { Backend, Command, Events, Devices, DeviceDesc, DeviceState, ChannelDesc, Monitor, RecordingInfo, View, AllStats, UartChunk, Edge, Stats, OutputDesc, SettingDesc } from './backend';
 // A device that cannot report a setpoint leaves it null; the simulation then assumes 3.7 V and no limit.
 const setpoints = (sim: Sim, i: number) => { const o = sim.state.outputs[i]; return { enabled: o.enabled, voltage: o.voltage ?? 3.7, current_limit: o.current_limit ?? Infinity }; };
@@ -148,6 +150,17 @@ function sim(id: unknown): Sim {
   return active && active.desc.id === id ? active : fail(`device ${String(id)} is not connected`);
 }
 
+/** The serial port linked to the device, and the two channels it adds to a recording. */
+let serial: SerialInfo = { port: null, open: false, settings: defaultSerialSettings };
+const serialChannels: ChannelDesc[] = [
+  { id: 0xfff0, name: 'serial.rx', label: 'Serial RX', unit: '', rate_hz: 0, kind: 'Bytes', quantity: 'Other', group: '', bits: 0, extra: false, set: false },
+  { id: 0xfff1, name: 'serial.tx', label: 'Serial TX', unit: '', rate_hz: 0, kind: 'Bytes', quantity: 'Other', group: '', bits: 0, extra: false, set: true },
+];
+/** Adds the serial RX channel to the live recording once a port is open. */
+function linkSerial() {
+  const r = live();
+  if (r && serial.open && !r.info.channels.includes(serialChannels[0])) update(r, { channels: [...r.info.channels, serialChannels[0]], samples: { ...r.info.samples, 'serial.rx': 0 } });
+}
 /** One recording: what the frontend knows about it and the samples behind it. */
 type Rec = {
   info: RecordingInfo; sim: Sim | null; tick: number; pulse: number; uart: UartChunk[]; edges: Edge[];
@@ -201,7 +214,7 @@ function update(r: Rec, patch: Partial<RecordingInfo>) {
 function recTick() {
   const r = live();
   if (!r?.sim) return;
-  generate(r, r.sim, r.sim.state.uart_open);
+  generate(r, r.sim, r.sim.state.uart_open || serial.open);
   update(r, { duration_s: r.tick / 10, samples: { ...r.info.samples } });
 }
 window.setInterval(recTick, 100);
@@ -308,6 +321,7 @@ export const mockBackend: Backend = {
     if (live()) fail('stop the recording before changing the device');
     const next = key === null ? null : sims.find(s => plugged && s.desc.id === key) ?? fail(`device ${key} is not plugged in`);
     wanted = key; active = null;
+    if (serial.open) { serial = { ...serial, open: false }; emit('serial', serial); }
     emit('devices', devices());
     // Opening a device takes a moment.
     if (next) window.setTimeout(() => { if (wanted === key) { active = next; emit('devices', devices()); } }, 300);
@@ -325,7 +339,9 @@ export const mockBackend: Backend = {
     for (const name of channels) if (!s.desc.channels.some(ch => ch.name === name)) fail(`unknown channel ${name}`);
     stop();
     const rx = s.desc.channels.find(ch => ch.kind === 'Bytes' && !ch.set);
-    return newRec(s, pick(s, [...channels, ...(s.state.uart_open && rx ? [rx.name] : [])]), true).info;
+    const r = newRec(s, pick(s, [...channels, ...(s.state.uart_open && rx ? [rx.name] : [])]), true);
+    linkSerial();
+    return r.info;
   },
   stopRecording: async () => stop(),
   closeRecording: async id => { if (live()?.info.id === id) stop(); recs.delete(id); },
@@ -340,6 +356,7 @@ export const mockBackend: Backend = {
     const s = sim(device);
     if (!s.desc.uart) fail('device has no UART');
     if (!Number.isInteger(baud) || baud <= 0) fail('invalid baud rate');
+    if (serial.open) fail('close the serial port first: a recording has one source of text');
     s.state = { ...s.state, uart_open: true }; changed(s);
     const r = live(), rx = s.desc.channels.find(ch => ch.kind === 'Bytes' && !ch.set);
     if (r?.sim === s && rx && !r.info.channels.includes(rx)) update(r, { channels: pick(s, [...r.info.channels.map(ch => ch.name), rx.name]), samples: { ...r.info.samples, [rx.name]: 0 } });
@@ -360,5 +377,28 @@ export const mockBackend: Backend = {
       r.uart.push({ t: t + .001, dir: 'rx', bytes });
       update(r, { samples: { ...r.info.samples, [rx.name]: (r.info.samples[rx.name] ?? 0) + bytes.length } });
     }, 1);
+  },
+  serialPorts: async () => [{ path: '/dev/ttyUSB1', name: 'FT232R USB UART' }, { path: '/dev/ttyACM3', name: 'J-Link CDC UART' }, { path: '/dev/ttyS0', name: '' }],
+  serialInfo: async () => serial,
+  serialOpen: async (device, port, settings) => {
+    if (sim(device).state.uart_open) fail("close the device's UART first: a recording has one source of text");
+    if (port === '/dev/ttyS0') fail(`${port}: Permission denied`);
+    serial = { port, open: true, settings };
+    emit('serial', serial);
+    linkSerial();
+  },
+  serialClose: async () => { serial = { ...serial, open: false }; emit('serial', serial); },
+  serialSend: async text => {
+    if (!serial.open) fail('no serial port is open');
+    const r = live();
+    if (!r) return;
+    const bytes = Array.from(new TextEncoder().encode(text));
+    r.uart.push({ t: r.info.duration_s, dir: 'tx', bytes });
+    update(r, { channels: r.info.channels.includes(serialChannels[1]) ? r.info.channels : [...r.info.channels, serialChannels[1]], samples: { ...r.info.samples, 'serial.tx': (r.info.samples['serial.tx'] ?? 0) + bytes.length } });
+  },
+  serialLines: async ({ dtr, rts }) => {
+    if (!serial.open) fail('no serial port is open');
+    serial = { ...serial, settings: { ...serial.settings, ...(dtr === undefined ? {} : { dtr }), ...(rts === undefined ? {} : { rts }) } };
+    emit('serial', serial);
   },
 };

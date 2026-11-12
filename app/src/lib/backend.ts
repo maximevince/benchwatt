@@ -27,7 +27,12 @@ export type Stats = { count: number; min: number; max: number; mean: number; rms
 export type AllStats = { channels: Record<string, Stats>; charge_mah: number | null; energy: { joules: number; mwh: number; average_power: number } | null };
 export type UartChunk = { t: number; bytes: number[]; dir: 'rx' | 'tx' };
 export type Edge = { t: number; mask: number };
-export type Events = { devices: Devices; state: { device: string; state: DeviceState }; monitor: Monitor; alert: Alert; recording: RecordingInfo };
+export type SerialSettings = { baud: number; data_bits: number; parity: 'none' | 'even' | 'odd'; stop_bits: number; flow: 'none' | 'rtscts' | 'xonxoff'; dtr: boolean; rts: boolean };
+/** A serial port of the PC that can be recorded next to the device. */
+export type PortInfo = { path: string; name: string };
+/** The linked serial port: which one was used last, how, and whether it is open now. */
+export type SerialInfo = { port: string | null; open: boolean; settings: SerialSettings };
+export type Events = { serial: SerialInfo; devices: Devices; state: { device: string; state: DeviceState }; monitor: Monitor; alert: Alert; recording: RecordingInfo };
 /** Commands that change a device and answer with its new state. */
 export type Command = 'set_output' | 'set_voltage' | 'set_current_limit' | 'set_setting' | 'set_gpo';
 export interface Backend {
@@ -51,6 +56,15 @@ export interface Backend {
   uartOpen(device: string, baud: number): Promise<void>;
   uartClose(device: string): Promise<void>;
   uartSend(device: string, text: string): Promise<void>;
+  /** The PC's serial ports, without those that are instruments. */
+  serialPorts(): Promise<PortInfo[]>;
+  serialInfo(): Promise<SerialInfo>;
+  /** Opens a port next to the device; what arrives on it is recorded as `serial.rx`. */
+  serialOpen(device: string, port: string, settings: SerialSettings): Promise<void>;
+  serialClose(): Promise<void>;
+  serialSend(text: string): Promise<void>;
+  /** Sets control lines of the open port; `pulse` drops DTR for a moment. */
+  serialLines(lines: { dtr?: boolean; rts?: boolean; pulse?: boolean }): Promise<void>;
 }
 const tauriBackend: Backend = {
   getDevices: () => invoke('get_devices'),
@@ -71,5 +85,11 @@ const tauriBackend: Backend = {
   uartOpen: (device, baud) => invoke('uart_open', { device, baud }),
   uartClose: device => invoke('uart_close', { device }),
   uartSend: (device, text) => invoke('uart_send', { device, text }),
+  serialPorts: () => invoke('serial_ports'),
+  serialInfo: () => invoke('serial_info'),
+  serialOpen: (device, port, settings) => invoke('serial_open', { device, port, settings }),
+  serialClose: () => invoke('serial_close'),
+  serialSend: text => invoke('serial_send', { text }),
+  serialLines: ({ dtr, rts, pulse = false }) => invoke('serial_lines', { dtr, rts, pulse }),
 };
 export const backend: Backend = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window ? tauriBackend : mockBackend;

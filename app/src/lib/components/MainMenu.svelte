@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { app } from '$lib/stores.svelte';
-  import { Menubar, MenubarMenu, MenubarTrigger, MenubarContent, MenubarItem, MenubarSeparator, MenubarShortcut, MenubarSub, MenubarSubTrigger, MenubarSubContent, MenubarCheckboxItem, MenubarRadioGroup, MenubarRadioItem } from '$lib/components/ui/menubar';
+  import { app, DEVICE_UART } from '$lib/stores.svelte';
+  import { Menubar, MenubarMenu, MenubarTrigger, MenubarContent, MenubarItem, MenubarSeparator, MenubarShortcut, MenubarSub, MenubarSubTrigger, MenubarSubContent, MenubarCheckboxItem, MenubarLabel, MenubarRadioGroup, MenubarRadioItem } from '$lib/components/ui/menubar';
   import DeviceItems from './DeviceItems.svelte';
   const outputs = $derived(app.selected?.desc.outputs ?? []);
-  const outputOn = (index: number) => app.selected?.state?.outputs[index]?.enabled ?? false;
+  // A port typed by hand is not in the list, but is still the one in use.
+  const typedPort = $derived(app.textSource && app.textSource !== DEVICE_UART && !app.ports.some(p => p.path === app.textSource) ? app.textSource : null);
+  const outputOn =(index: number) => app.selected?.state?.outputs[index]?.enabled ?? false;
 </script>
 <Menubar class="main-menu">
   <MenubarMenu><MenubarTrigger>File</MenubarTrigger><MenubarContent>
@@ -35,13 +37,23 @@
     <MenubarCheckboxItem checked={app.drawerOpen} onclick={() => app.drawerOpen = !app.drawerOpen}>Bottom panel<MenubarShortcut>Ctrl+J</MenubarShortcut></MenubarCheckboxItem>
     <MenubarSub><MenubarSubTrigger>Theme</MenubarSubTrigger><MenubarSubContent><MenubarRadioGroup value={app.theme}>{#each ['system','light','dark'] as theme}<MenubarRadioItem value={theme} onclick={() => app.setTheme(theme as 'system' | 'light' | 'dark')}>{theme[0].toUpperCase()+theme.slice(1)}</MenubarRadioItem>{/each}</MenubarRadioGroup></MenubarSubContent></MenubarSub>
   </MenubarContent></MenubarMenu>
-  <MenubarMenu><MenubarTrigger>Device</MenubarTrigger><MenubarContent>
+  <MenubarMenu onOpenChange={open => { if (open) void app.refreshPorts(); }}><MenubarTrigger>Device</MenubarTrigger><MenubarContent>
     <DeviceItems/>
     <MenubarSeparator/>
     <MenubarItem disabled={!app.selected && !app.live} onclick={() => void app.toggleRecording()}>{app.live ? 'Stop recording' : 'New recording'}<MenubarShortcut>R</MenubarShortcut></MenubarItem>
     {#if outputs.length === 1}<MenubarItem disabled={app.disabled} onclick={() => void app.toggleOutput()}>Switch output {outputOn(0) ? 'off' : 'on'}<MenubarShortcut>Space</MenubarShortcut></MenubarItem>
     {:else if outputs.length}<MenubarSub><MenubarSubTrigger disabled={app.disabled}>Outputs</MenubarSubTrigger><MenubarSubContent>{#each outputs as output, index (output.n)}<MenubarCheckboxItem checked={outputOn(index)} onclick={() => void app.command('set_output', { out: output.n, on: !outputOn(index) })}>{output.label}</MenubarCheckboxItem>{/each}</MenubarSubContent></MenubarSub>{/if}
-    {#if app.selected?.desc.uart}<MenubarCheckboxItem checked={app.uartOpen} onclick={() => void app.toggleUart()}>UART open</MenubarCheckboxItem>{/if}
+    <MenubarSub><MenubarSubTrigger disabled={!app.selected}>Serial port</MenubarSubTrigger><MenubarSubContent>
+      <MenubarRadioGroup value={app.textSource ?? ''}>
+        {#if app.selected?.desc.uart}<MenubarRadioItem value={DEVICE_UART} closeOnSelect onclick={() => void app.chooseSource(DEVICE_UART)}>{app.selected.desc.model} UART</MenubarRadioItem>{/if}
+        {#each app.ports as port (port.path)}<MenubarRadioItem value={port.path} closeOnSelect onclick={() => void app.chooseSource(port.path)}><span class="device-item"><span>{port.name || port.path}</span>{#if port.name}<small>{port.path.split('/').pop()}</small>{/if}</span></MenubarRadioItem>{/each}
+        {#if typedPort}<MenubarRadioItem value={typedPort} closeOnSelect>{typedPort}</MenubarRadioItem>{/if}
+      </MenubarRadioGroup>
+      {#if !app.ports.length && !app.selected?.desc.uart}<MenubarLabel class="device-none">No serial port found</MenubarLabel>{/if}
+      <MenubarSeparator/>
+      <MenubarItem disabled={!app.textSource} onclick={() => void app.toggleText()}>{app.textOpen ? 'Close port' : 'Open port'}</MenubarItem>
+      <MenubarItem onclick={() => { app.drawerTab = 'uart'; app.drawerOpen = true; }}>Show console</MenubarItem>
+    </MenubarSubContent></MenubarSub>
     <MenubarSeparator/>
     <MenubarItem disabled={!app.selected} onclick={() => app.dialog='device'}>Device info…</MenubarItem>
   </MenubarContent></MenubarMenu>

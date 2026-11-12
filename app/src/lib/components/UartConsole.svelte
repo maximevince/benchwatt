@@ -3,6 +3,7 @@
   import { app } from '$lib/stores.svelte';
   import { linesFromChunks, filterLines, linesInRange, formatUartTime, type UartLine } from '$lib/uart';
   import { Button } from '$lib/components/ui/button';
+  import SerialSource from './SerialSource.svelte';
   import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut } from '$lib/components/ui/context-menu';
   let query = $state(''), showTx = $state(true), showTimes = $state(true), hex = $state(false);
   let ending = $state('LF'), outgoing = $state(''), history: string[] = [], historyIndex = -1;
@@ -37,9 +38,9 @@
     void navigator.clipboard.writeText(lines.map(x => `${showTimes ? formatUartTime(x.t,app.viewRange[1]-app.viewRange[0])+'\t' : ''}${x.dir === 'tx' ? '→ ' : ''}${asHex ? x.bytes.map(byte => byte.toString(16).padStart(2,'0').toUpperCase()).join(' ') : asText(x)}`).join('\n'));
   }
   async function send() {
-    if (!outgoing || !app.uartOpen) return;
+    if (!outgoing || !app.textOpen) return;
     const raw=outgoing, suffix=ending === 'LF' ? '\n' : ending === 'CRLF' ? '\r\n' : '';
-    try { await app.uartSend(raw+suffix); history.push(raw); historyIndex=history.length; outgoing=''; await app.refreshDetails(); pinned=true; }
+    try { await app.sendText(raw+suffix); history.push(raw); historyIndex=history.length; outgoing=''; await app.refreshDetails(); pinned=true; }
     catch (cause) { app.report(cause); }
   }
   function sendKey(event: KeyboardEvent) {
@@ -59,8 +60,7 @@
 </script>
 <div class="uart-console" onkeydown={copy} role="listbox" tabindex="0" aria-label="UART console">
   <div class="uart-console-toolbar">
-    {#if app.selected?.desc.uart}<label>Baud <input type="number" min="1" max="3000000" bind:value={app.baud} disabled={app.uartOpen}/></label>
-    <Button size="sm" variant="outline" disabled={!app.selected.state} onclick={() => void app.toggleUart()}>{app.uartOpen ? 'Close' : 'Open'}</Button>{/if}
+    <SerialSource/>
     <button class:active={!hex} onclick={() => hex=false}>ASCII</button><button class:active={hex} onclick={() => hex=true}>Hex</button>
     <label><input type="checkbox" bind:checked={showTx}/> Show TX</label><label><input type="checkbox" bind:checked={showTimes}/> Timestamps</label>
     <input class="uart-filter" placeholder="Filter lines…" aria-label="Filter UART lines" bind:value={query}/>
@@ -68,9 +68,11 @@
   </div>
   <div class="uart-viewport" bind:this={scroller} bind:clientHeight={viewport} onscroll={onScroll}>
     {#if query && filtered.length === 0 && all.length > 0}<p class="empty-state">No lines match “{query}”</p>
-    {:else if !app.selected?.desc.uart && filtered.length === 0}<p class="empty-state">{app.selected ? 'This device has no UART' : 'No UART data'}</p>
-    {:else if !app.uartOpen && filtered.length === 0}<p class="empty-state">Open the UART to capture RX</p>
-    {:else if !app.live && filtered.length === 0}<p class="empty-state">RX is captured while recording (press R)</p>{/if}
+    {:else if filtered.length > 0}<!-- lines below -->
+    {:else if !app.selected}<p class="empty-state">No text in this recording</p>
+    {:else if !app.textSource}<div class="serial-empty"><strong>See what your target prints next to its current</strong><p>Choose a serial port of this PC under Port. What arrives on it is recorded on the same time axis as the measurement, and you can type back.</p></div>
+    {:else if !app.textOpen}<p class="empty-state">Open the port to record what arrives on it</p>
+    {:else if !app.live}<p class="empty-state">Text is recorded while a recording runs (press R)</p>{/if}
     <div style:height={filtered.length*rowHeight+'px'} class="uart-virtual-space">
       {#each visible as line, i (line.id)}
         <ContextMenu><ContextMenuTrigger class={'uart-line'+(line.dir === 'tx' ? ' tx' : '')+(highlighted(line) ? ' selected' : '')+(app.focusedUartTime === line.t ? ' hovered' : '')} style={'top:'+((first+i)*rowHeight)+'px'} onclick={e => select(line,e.shiftKey)} oncontextmenu={() => contextLine=line} onmouseenter={() => app.hoverMarker=line.t} onmouseleave={() => app.hoverMarker=null}>
@@ -80,5 +82,5 @@
     </div>
   </div>
   {#if !pinned}<button class="uart-jump" onclick={() => { scroller.scrollTop=scroller.scrollHeight; pinned=true; }}>Jump to latest</button>{/if}
-  {#if app.selected?.desc.uart}<form class="uart-send" onsubmit={e => { e.preventDefault(); void send(); }}><input aria-label="UART text to send" placeholder="Send text…" bind:value={outgoing} disabled={!app.uartOpen} onkeydown={sendKey}/><select aria-label="Line ending" bind:value={ending}><option>None</option><option>LF</option><option>CRLF</option></select><Button type="submit" size="sm" disabled={!app.uartOpen || !outgoing}>Send</Button></form>{/if}
+  {#if app.textSource}<form class="uart-send" onsubmit={e => { e.preventDefault(); void send(); }}><input aria-label="UART text to send" placeholder="Send text…" bind:value={outgoing} disabled={!app.textOpen} onkeydown={sendKey}/><select aria-label="Line ending" bind:value={ending}><option>None</option><option>LF</option><option>CRLF</option></select><Button type="submit" size="sm" disabled={!app.textOpen || !outgoing}>Send</Button></form>{/if}
 </div>

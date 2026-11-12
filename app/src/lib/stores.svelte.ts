@@ -2,7 +2,8 @@ import { toast } from 'svelte-sonner';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { documentDir, join } from '@tauri-apps/api/path';
-import { backend, type Alert, type Command, type Device, type Devices, type DeviceState, type FoundDevice, type Monitor, type OutputDesc, type RecordingInfo, type AllStats, type UartChunk, type Edge } from './backend';
+import { backend, type Alert, type Command, type Device, type Devices, type DeviceState, type FoundDevice, type Monitor, type OutputDesc, type PortInfo, type RecordingInfo, type SerialInfo, type SerialSettings, type AllStats, type UartChunk, type Edge } from './backend';
+import { defaultSerialSettings } from './serial';
 import { defaultRecordChannels, lanesFor, orderedEntries, rxChannel } from './channels';
 
 // File dialogs open in the folder used last (per machine), else ~/Documents.
@@ -18,6 +19,18 @@ function rememberDir(path: string) {
 }
 
 const LAST_DEVICE_KEY = 'benchwatt.device';
+/** Remembered per kind of instrument: where its text came from last. */
+const SOURCE_KEY = 'benchwatt.text.';
+/** Remembered per serial port: how it was set up last. */
+const PORT_KEY = 'benchwatt.port.';
+function stored<T>(key: string): T | null {
+  try { const text = localStorage.getItem(key); return text ? JSON.parse(text) as T : null; } catch { return null; }
+}
+function store(key: string, value: unknown) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage unavailable */ }
+}
+/** Marks the device's own UART as the source of text, as opposed to a port path. */
+export const DEVICE_UART = 'device';
 const baseName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
 export type AlertEntry = Alert & { key: number; time: string };
@@ -118,6 +131,55 @@ class AppState {
   /** Plot lanes of the recording on screen, from its own channel list. */
   lanes = $derived(lanesFor(this.recording?.channels ?? [], this.recordingOutputs));
   get uartOpen() { return this.selected?.state?.uart_open ?? false; }
+  /** The serial port linked to the device, as the backend has it. */
+  serial = $state<SerialInfo>({ port: null, open: false, settings: defaultSerialSettings });
+  ports = $state<PortInfo[]>([]);
+  /** Where text comes from: the device's own UART, a serial port's path, or nothing chosen yet. A recording has one source. */
+  textSource = $state<string | null>(null);
+  /** How the chosen serial port is opened. */
+  portSettings = $state<SerialSettings>({ ...defaultSerialSettings });
+  get textOpen() { return this.textSource === DEVICE_UART ? this.uartOpen : this.serial.open && this.serial.port === this.textSource; }
+  async refreshPorts() { try { this.ports = await backend.serialPorts(); } catch (cause) { this.report(cause); } }
+  /** Picks the source of text, closing the one that was open. */
+  async chooseSource(source: string | null) {
+    if (source === this.textSource) return;
+    if (this.textOpen) await this.toggleText();
+    this.textSource = source;
+    if (source && source !== DEVICE_UART) this.portSettings = { ...defaultSerialSettings, ...stored<SerialSettings>(PORT_KEY + source) };
+    if (this.selected) store(SOURCE_KEY + this.selected.desc.kind, source);
+  }
+  /** Opens or closes the chosen source of text. */
+  async toggleText() {
+    const source = this.textSource, device = this.selected;
+    if (!source || !device) return;
+    if (source === DEVICE_UART) return this.toggleUart();
+    try {
+      if (this.serial.open) await backend.serialClose();
+      else {
+        store(PORT_KEY + source, this.portSettings);
+        await backend.serialOpen(device.desc.id, source, $state.snapshot(this.portSettings));
+        this.drawerTab = 'uart'; this.drawerOpen = true;
+      }
+    } catch (cause) { this.report(cause); }
+  }
+  async sendText(text: string) {
+    if (this.textSource === DEVICE_UART) await this.uartSend(text); else await backend.serialSend(text);
+  }
+  /** Sets a control line of the serial port: now if it is open, and for the next time it is opened. */
+  async setLine(line: 'dtr' | 'rts', on: boolean) {
+    this.portSettings = { ...this.portSettings, [line]: on };
+    if (this.textSource && this.textSource !== DEVICE_UART) store(PORT_KEY + this.textSource, this.portSettings);
+    if (this.serial.open) try { await backend.serialLines({ [line]: on }); } catch (cause) { this.report(cause); }
+  }
+  async pulseDtr() { try { await backend.serialLines({ pulse: true }); } catch (cause) { this.report(cause); } }
+  /** The source of text this device used last: its own UART if it has one and nothing else was chosen. */
+  private restoreSource() {
+    const device = this.selected;
+    const saved = device ? stored<string>(SOURCE_KEY + device.desc.kind) : null;
+    const source = this.serial.open ? this.serial.port : saved === DEVICE_UART && !device?.desc.uart ? null : saved ?? (device?.desc.uart ? DEVICE_UART : null);
+    this.textSource = source;
+    this.portSettings = source && source !== DEVICE_UART ? { ...defaultSerialSettings, ...(this.serial.open ? this.serial.settings : stored<SerialSettings>(PORT_KEY + source)) } : { ...defaultSerialSettings };
+  }
   private key = 0;
   get darkTheme() { return this.theme === 'dark' || (this.theme === 'system' && this.systemDark); }
   get disabled() { return !this.selected?.state || this.busy; }
@@ -138,6 +200,7 @@ class AppState {
     media.addEventListener('change', changed);
     const off = await Promise.all([
       backend.listen('devices', value => this.setDevices(value)),
+      backend.listen('serial', value => { this.serial = value; }),
       backend.listen('state', value => this.setState(value.device, value.state)),
       backend.listen('monitor', value => { if (this.selected?.desc.id === value.device) this.monitor = value; }),
       backend.listen('alert', value => {
@@ -155,7 +218,9 @@ class AppState {
       }),
     ]);
     try {
+      this.serial = await backend.serialInfo();
       this.setDevices(await backend.getDevices());
+      void this.refreshPorts();
       // Recordings outlive a reload of the window.
       this.tabs = (await backend.recordings()).map(info => new Tab(info));
       this.tabId = this.tabs.at(-1)?.id ?? null;
@@ -164,8 +229,9 @@ class AppState {
   }
   private setDevices(devices: Devices) {
     this.found = devices.found; this.wanted = devices.wanted; this.deviceError = devices.error;
-    if (devices.active?.desc.id !== this.selected?.desc.id) this.monitor = null;
+    const changed = devices.active?.desc.id !== this.selected?.desc.id;
     this.selected = devices.active;
+    if (changed) { this.monitor = null; this.restoreSource(); }
     if (devices.wanted || this.released) return;
     // Nothing chosen yet: take the device used last time, or the only one there is.
     let last: string | null = null;

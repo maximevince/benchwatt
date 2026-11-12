@@ -103,6 +103,17 @@ hold an instrument, so choose Device → Disconnect (or close the app) before
 using the command line tool on the same one. `npm run tauri build` produces a `.deb` and an AppImage under
 `target/release/bundle/`.
 
+Any serial port of the PC can be recorded next to the instrument: choose it in
+the Serial tab of the bottom panel, or under Device → Serial port, and open
+it. What the target prints then lands in the console and on the time axis of
+the recording, and you can type back. This gives a GPP or a PPK2 what the Arc's
+own UART does. Parity, stop bits, flow control and the DTR and RTS lines are
+behind the small button next to the baud rate. A recording takes its text from
+one place, the instrument's UART or a serial port. The PC stamps the bytes
+when it reads them, so they sit within some milliseconds of the current trace
+(a USB adapter may hold bytes back; FTDI ones for up to 16 ms), which is
+enough to tell which log line goes with which current peak.
+
 Without any hardware, `cd app && npm run dev` serves the interface at
 <http://127.0.0.1:1420> with a simulated Arc. Add `?devices=arc,gpp,ppk2` to
 the address for a simulated GPP-4323 and PPK2 as well. This is handy for
@@ -131,6 +142,12 @@ benchwatt record --ch mc,mv,mp --gpi --uart 115200 --duration 30s -o boot.bwrec
 benchwatt convert boot.bwrec boot.sr
 benchwatt stats boot.bwrec --from 2s --to 5s
 benchwatt power off
+```
+
+With an instrument that has no UART, record a serial port of the PC instead:
+
+```sh
+benchwatt --device gpp record --ch ch1.i --serial /dev/ttyUSB1:115200 --duration 30s -o boot.bwrec
 ```
 
 `mc`, `mv` and `mp` are the Arc's names for main current, voltage and power.
