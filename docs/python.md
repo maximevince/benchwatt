@@ -44,9 +44,9 @@ dev = benchwatt.open("gpp@/dev/ttyUSB0")   # a device on a given port
 | Arc | `mc`, `mv`, `mp` (main output), `ac`, `av`, `vb`, `tp`, ..., `gpi` (digital), `rx`, `tx` (UART) | `current_mode` (`cutoff`, `limit`), `io_voltage`, `5v_pin`, `4wire` |
 | GPP | `ch1.v`, `ch1.i`, `ch1.p`, ... up to `ch4.*` | `poll_rate`, `ovp1`, `ovp1_on`, `ocp1`, `ocp1_on`, ... |
 | PPK2 | `i`, `v` (the voltage that was set), `d` (8 digital inputs) | `mode` (`source`, `ampere`), `spike_filter` |
-| Joulescope JS220 | `i`, `v`, `p` | `rate` (`10Hz` to `1MHz` in 1-2-5 steps, `10kHz` when opened), `range` (`off`, `auto`, `10A`, `180mA`, `18mA`, `1.8mA`, `180uA`, `18uA`), `voltage_range` (`auto`, `15V`, `2V`), `gpio_vref` (`external`, `3.3V`) |
+| Joulescope JS220 | `i`, `v`, `p` | `power` (true or false), `rate` (`10Hz` to `1MHz` in 1-2-5 steps, `10kHz` when opened), `range` (`off`, `auto`, `10A`, `180mA`, `18mA`, `1.8mA`, `180uA`, `18uA`), `voltage_range` (`auto`, `15V`, `2V`), `gpio_vref` (`external`, `3.3V`) |
 
-The Joulescope has no output of its own, but its `range` works as a switch in the target's supply line: `off` opens the line, anything else closes it. The instrument keeps the range after it is closed; the `rate` belongs to the open device and starts at `10kHz` each time.
+The Joulescope has no output of its own, but its `range` works as a switch in the target's supply line: `off` opens the line, anything else closes it. `power` is that same switch as an on/off: `set("power", False)` sets the range to `off`, and `True` sets it to `auto` unless a range is already chosen. The instrument keeps the range after it is closed; the `rate` belongs to the open device and starts at `10kHz` each time.
 
 ## Supply outputs
 

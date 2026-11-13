@@ -359,6 +359,10 @@ impl Device for Joulescope {
         };
         let rates: Vec<_> = RATES.iter().map(|r| r.1).collect();
         vec![
+            SettingDesc {
+                kind: SettingKind::Bool,
+                ..setting("power", "Target power", &[])
+            },
             setting("rate", "Sample rate", &rates),
             setting("range", "Current range", &range_options()),
             setting("voltage_range", "Voltage range", &VOLTAGE_RANGES),
@@ -370,6 +374,12 @@ impl Device for Joulescope {
             "rate" => {
                 let hz = self.rate.load(Ordering::Relaxed);
                 RATES.iter().find(|r| r.0 == hz).map(|r| r.1)
+            }
+            // The same switch as range "off", as the on/off it is in practice.
+            "power" => {
+                return Ok(self
+                    .query("s/i/range/mode")?
+                    .map_or(Value::Null, |mode| Value::Bool(mode != MODE_OFF)));
             }
             "range" => match self.query("s/i/range/mode")? {
                 Some(MODE_OFF) => Some("off"),
@@ -405,6 +415,15 @@ impl Device for Joulescope {
                 self.publish("h/fs", hz)?;
                 self.rate.store(hz, Ordering::Relaxed);
             }
+            "power" => match value.as_bool() {
+                Some(false) => self.publish("s/i/range/mode", MODE_OFF)?,
+                // Switching on keeps a range that is already closed.
+                Some(true) if self.query("s/i/range/mode")? == Some(MODE_OFF) => {
+                    self.publish("s/i/range/mode", MODE_AUTO)?
+                }
+                Some(true) => {}
+                None => return Err(Error::invalid("power takes true or false")),
+            },
             "range" => match choice(&value, key, &range_options())? {
                 0 => self.publish("s/i/range/mode", MODE_OFF)?,
                 1 => self.publish("s/i/range/mode", MODE_AUTO)?,

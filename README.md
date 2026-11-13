@@ -105,7 +105,8 @@ using the command line tool on the same one. `npm run tauri build` produces a `.
 
 Any serial port of the PC can be recorded next to the instrument: choose it in
 the Serial tab of the bottom panel, or under Device → Serial port, and open
-it. What the target prints then lands in the console and on the time axis of
+it. Built-in `ttyS` ports appear only when there is a real UART behind them.
+What the target prints then lands in the console and on the time axis of
 the recording, and you can type back. This gives a GPP or a PPK2 what the Arc's
 own UART does. Parity, stop bits, flow control and the DTR and RTS lines are
 behind the small button next to the baud rate. A recording takes its text from
@@ -173,6 +174,8 @@ benchwatt --device ppk2 measure --ch i --duration 5s --volt 1.8V --on --settle 1
 
 A Joulescope sits in the supply line of the target and can interrupt it. Its
 current range decides: `off` opens the line, `auto` or a fixed range closes it.
+The `power` setting is the same switch as a plain on/off, and it is the
+"Target power" switch in the app.
 
 ```sh
 benchwatt --device joulescope set range auto
