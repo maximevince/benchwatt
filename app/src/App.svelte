@@ -57,7 +57,7 @@
     else if ((key === '+' || key === '=') && app.recording) app.zoom(.5);
     else if (key === '-' && app.recording) app.zoom(2);
     else if (event.code === 'Space' && app.selected && !target.closest('button')) {
-      event.preventDefault(); void app.toggleOutput().then(on => { if (on != null) toast.info(on ? 'Output enabled' : 'Output disabled'); });
+      event.preventDefault(); void app.toggleOutput().then(on => { if (on != null) toast.info((app.selected?.desc.outputs.length ? 'Output ' : 'Target power ') + (on ? 'on' : 'off')); });
     }
   }
 

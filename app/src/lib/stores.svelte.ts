@@ -258,12 +258,23 @@ class AppState {
     finally { this.busy = false; }
   }
   report(cause: unknown) { this.error = String(cause); toast.error(this.error); }
-  /** Toggles the output of a device that has exactly one; with several there is no default. */
+  /** Whether the one thing that powers the target is on: a supply's only output, or the
+   *  `power` setting of a device that switches a supply line (the Joulescope). `null` when
+   *  there is no such single switch. */
+  get powerOn(): boolean | null {
+    const device = this.selected;
+    if (!device) return null;
+    if (device.desc.outputs.length === 1) return device.state?.outputs[0]?.enabled ?? false;
+    if (!device.desc.outputs.length && device.desc.settings.some(s => s.key === 'power' && s.type === 'bool' && !s.readonly)) return device.state?.settings.power === true;
+    return null;
+  }
+  /** Toggles that single switch; with several outputs there is no default. */
   async toggleOutput() {
-    const outputs = this.selected?.desc.outputs ?? [];
-    if (outputs.length !== 1) return null;
-    const on = !this.selected?.state?.outputs[0]?.enabled;
-    return await this.command('set_output', { out: outputs[0].n, on }) ? on : null;
+    const device = this.selected, was = this.powerOn;
+    if (!device || was === null) return null;
+    const output = device.desc.outputs[0];
+    const done = output ? await this.command('set_output', { out: output.n, on: !was }) : await this.command('set_setting', { key: 'power', value: !was });
+    return done ? !was : null;
   }
   /** Stops the running capture, or starts one in a new tab. */
   async toggleRecording() {

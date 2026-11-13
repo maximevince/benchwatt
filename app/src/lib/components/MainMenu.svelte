@@ -41,7 +41,7 @@
     <DeviceItems/>
     <MenubarSeparator/>
     <MenubarItem disabled={!app.selected && !app.live} onclick={() => void app.toggleRecording()}>{app.live ? 'Stop recording' : 'New recording'}<MenubarShortcut>R</MenubarShortcut></MenubarItem>
-    {#if outputs.length === 1}<MenubarItem disabled={app.disabled} onclick={() => void app.toggleOutput()}>Switch output {outputOn(0) ? 'off' : 'on'}<MenubarShortcut>Space</MenubarShortcut></MenubarItem>
+    {#if app.powerOn !== null}<MenubarItem disabled={app.disabled} onclick={() => void app.toggleOutput()}>Switch {outputs.length ? 'output' : 'target power'} {app.powerOn ? 'off' : 'on'}<MenubarShortcut>Space</MenubarShortcut></MenubarItem>
     {:else if outputs.length}<MenubarSub><MenubarSubTrigger disabled={app.disabled}>Outputs</MenubarSubTrigger><MenubarSubContent>{#each outputs as output, index (output.n)}<MenubarCheckboxItem checked={outputOn(index)} onclick={() => void app.command('set_output', { out: output.n, on: !outputOn(index) })}>{output.label}</MenubarCheckboxItem>{/each}</MenubarSubContent></MenubarSub>{/if}
     <MenubarSub><MenubarSubTrigger disabled={!app.selected}>Serial port</MenubarSubTrigger><MenubarSubContent>
       <MenubarRadioGroup value={app.textSource ?? ''}>
