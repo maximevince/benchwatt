@@ -164,6 +164,7 @@ pub fn ports() -> Vec<PortInfo> {
     let mut ports: Vec<PortInfo> = serialport::available_ports()
         .unwrap_or_default()
         .into_iter()
+        .filter(|p| !is_empty_slot(&p.port_name))
         .filter_map(|p| {
             let name = match p.port_type {
                 SerialPortType::UsbPort(u) if INSTRUMENTS.contains(&(u.vid, u.pid)) => return None,
@@ -178,6 +179,14 @@ pub fn ports() -> Vec<PortInfo> {
         .collect();
     ports.sort_by(|a, b| a.path.cmp(&b.path));
     ports
+}
+/// Linux creates `/dev/ttyS0` to `ttyS31` whether or not there is a UART
+/// behind them. Those without one report type 0 (unknown).
+fn is_empty_slot(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.starts_with("ttyS")
+        && std::fs::read_to_string(format!("/sys/class/tty/{name}/type"))
+            .is_ok_and(|t| t.trim() == "0")
 }
 /// Whether this path, however it is spelled, is the port of a supported
 /// instrument. Those are never opened as plain ports.
